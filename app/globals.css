@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: var(--ink-400);
+  }
+
+  html {
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-color: var(--ink-000);
+    color: var(--fg-000);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 21px;
+  }
+}
