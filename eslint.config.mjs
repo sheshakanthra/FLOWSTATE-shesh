@@ -5,7 +5,13 @@ import localPlugin from "./eslint-plugin-local/no-color-literals.js";
 
 export default tseslint.config(
   {
-    ignores: [".next/**", "node_modules/**", "playwright-report/**", "test-results/**"],
+    ignores: [
+      ".next/**",
+      "node_modules/**",
+      "playwright-report/**",
+      "test-results/**",
+      "storybook-static/**",
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

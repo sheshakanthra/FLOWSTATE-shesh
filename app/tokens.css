@@ -63,6 +63,14 @@
   --row-height: 40px;
   --card-padding: 16px;
   --section-gap: 24px;
+
+  /* ---- elevation: no drop shadows except on floating layers ----
+     Luminance steps and hairlines come from --ink-* tokens directly; these
+     two are the only raw values elevation needs, so they live here rather
+     than being redefined per component. */
+  --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --shadow-floating: 0 16px 48px -12px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --blur-floating: 8px;
 }
 
 [data-theme="light"] {
@@ -152,6 +160,11 @@
   --spacing-row-height: var(--row-height);
   --spacing-card-padding: var(--card-padding);
   --spacing-section-gap: var(--section-gap);
+
+  /* elevation — utilities like shadow-card, shadow-floating, backdrop-blur-floating */
+  --shadow-card: var(--shadow-card);
+  --shadow-floating: var(--shadow-floating);
+  --blur-floating: var(--blur-floating);
 
   /* type scale — utilities like text-display-lg, text-body, text-mono-sm */
   --text-display-lg: 40px;

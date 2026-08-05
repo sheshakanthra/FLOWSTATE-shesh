@@ -1,6 +1,19 @@
 @import "tailwindcss";
 @import "./tokens.css";
 
+@layer utilities {
+  /* CSS-transition mirrors of lib/motion.ts's instant/fast tokens, for plain
+     hover/focus pseudo-class transitions that don't go through Framer Motion. */
+  .transition-instant {
+    transition-duration: 90ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+  .transition-fast {
+    transition-duration: 160ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+}
+
 @layer base {
   * {
     box-sizing: border-box;
