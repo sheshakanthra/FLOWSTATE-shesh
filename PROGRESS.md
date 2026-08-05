@@ -4,8 +4,8 @@ Claude Code reads this at the start of every session and updates it at the end. 
 
 ## Current session
 
-**Next up:** A4 — Motion, Shimmer, EmberEdge, FiringBar, undo
-**Spec:** `docs/phases/A4-motion-ai-primitives.md`
+**Next up:** A5 — Data primitives & layout primitives
+**Spec:** `docs/phases/A5-data-layout-primitives.md`
 
 ## Sessions
 
@@ -14,7 +14,7 @@ Claude Code reads this at the start of every session and updates it at the end. 
 | A1 | Repo scaffold & token pipeline | done | yes |
 | A2 | Form & display primitives | done | yes |
 | A3 | Overlay primitives | done | yes |
-| A4 | Motion, Shimmer, EmberEdge, FiringBar, undo | not started | — |
+| A4 | Motion, Shimmer, EmberEdge, FiringBar, undo | done | yes (item 1's 60fps claim needs a manual Performance-panel look — see Known issues) |
 | A5 | Data primitives & layout primitives | not started | — |
 | A6 | App shell, workspace, seed data | not started | — |
 | B1 | Agent canvas foundation | not started | — |
@@ -56,12 +56,23 @@ Record only decisions that are NOT obvious from reading the code. Format: `[sess
 - `[A3]` No `cmdk`, no `zustand` — CommandPalette's registry (`registerCommands`/`useCommands`) and Toast's queue are both a plain module-level store (`Map`/array + subscriber `Set`) exposed to React via `useSyncExternalStore`, since neither dependency was named by the spec and CLAUDE.md says not to add one that isn't.
 - `[A3]` CommandPalette's motion tier is `base` (240ms) — not explicitly named in the spec's `fast`/`base` component lists, but grouped with Dialog by both radius (`xl`) and modal semantics, so `base` is the consistent inference rather than a guess left undocumented.
 - `[A3]` `TooltipProvider`'s `delayDuration` is left to the caller to set (Radix's own default is 700ms) rather than hardcoded inside `tooltip.tsx` — 700ms reads sluggish for a dense builder UI, but that's a product judgment call for whichever session wires up the real Tooltip usages, not something to bake into the primitive.
+- `[A4]` `useReducedMotion()`'s internals were swapped from a per-component matchMedia subscription to a context read, exactly as the A3 decision above flagged. `MotionContext` lives in `lib/motion.ts` (so every existing `@/lib/motion` import path stays valid — zero call-site changes in dialog/popover/toast/drawer/sheet/hover-card/tooltip/dropdown-menu/context-menu/command-palette); the actual `<MotionProvider>` component (the one thing that still touches `matchMedia`, once, via `useSyncExternalStore`) lives in `components/motion/motion-provider.tsx` per this session's file layout. Mounted in `app/layout.tsx` around `{children}` and in `.storybook/preview.tsx`'s decorator — skipping either would silently freeze every A3 overlay's reduced-motion behavior at the context default (`false`).
+- `[A4]` Added a "Motion" Storybook toolbar global (`no-preference` / `reduce`) alongside the existing Theme/Density ones, and gave `MotionProvider` an optional `forceReducedMotion` prop the preview decorator passes through. Real app usage (`app/layout.tsx`) never passes it, so production always reflects the actual OS/browser preference — the override only exists so reduced-motion behavior can be exercised in Storybook without emulating the media feature at the OS level.
+- `[A4]` Added two new primitives to `app/tokens.css`: `--ai-glow` (Shimmer/EmberEdge's achromatic luminance color) and `--gradient-spectral` (SpectralHairline's one gradient, built from the five existing semantic base hues rather than new literals). `--ai-glow` is theme-scoped like every other color in the file — dark mode brightens toward white, light mode darkens toward ink, since a "white delta" is invisible against a near-white surface. Same achromatic intent (luminance only, zero saturation) in both directions.
+- `[A4]` Shimmer is a uniform whole-surface opacity breathing (0 → 8% → 0 of `--ai-glow`), not a moving gradient band — the spec's own notes call out that a moving band reads as a loading skeleton, which is exactly the effect it's meant to avoid.
+- `[A4]` `SpectralHairline`'s duplicate-detection is a module-level mount counter (effect-based: increments on mount, decrements on unmount, warns via `console.warn` in dev when count > 1), not a React-context subtree boundary. The spec says "once per subtree," but nothing in this session names a boundary/provider component, and catching the most natural test case — two instances rendered as direct siblings — needs a counter shared across the whole commit, not just nested descendants a context `Provider` would catch. DESIGN.md's own framing ("**the single** spectral hairline") reads as a true singleton signal, so treating "more than one mounted at once, anywhere" as the violation condition matches that intent closer than a narrower subtree scope would.
+- `[A4]` `FiringBar` segments are equal-width shares (`100 / count`%), not sized by any per-operation weight — `FiringOperation` has no "expected size" concept, and "proportionally sized" most plausibly reads as "proportional to how many are running," matching DESIGN.md's "a still screenshot shows three things running at once." Resize/enter/exit go through framer-motion's `layout` prop (transform-based, not a manual width recalculation) specifically for the 12-concurrent-segments-without-layout-thrash gate item.
+- `[A4]` Gate item 4 asks for something stricter for the Firing Bar than the general reduced-motion rule: segments must appear/disappear "without animation," not with the usual 90ms crossfade every other component falls back to. `components/firing-bar/index.tsx` has a local zero-duration transition for exactly this case rather than reusing `lib/motion.ts`'s `instant` token.
+- `[A4]` The Firing Bar's hover panel also opens on focus (a visually-hidden button, `sr-only focus:not-sr-only`, inside the same container) so keyboard users reach the same live-operations list a mouse-hover would show — the 3px strip itself is `aria-hidden` and can't hold focus. That button intentionally has **no** `onClick` toggle: clicking it fires a native `focus` event before the `click` handler runs, so `onFocus` already opens the panel by the time a click toggle would fire — a toggle immediately closes what focus just opened, so it never opens on click at all. Found via a headless Playwright run of the story's own `play` function failing, not by inspection.
+- `[A4]` `useUndoable()` registers an already-applied mutation's inverse — it doesn't run the mutation itself. The spec's "every mutation is optimistic with a rollback, and registers an inverse with `useUndoable`" reads as: the mutation happens wherever it naturally does (a click handler, a TanStack Query `onMutate`), and this hook is purely the registration + confirmation-toast + ⌘Z-binding-guarantee step. `useUndoShortcuts()` (ref-counted, so N mounted `useUndoable()` callers still bind exactly one `document` keydown listener) is called unconditionally inside `useUndoable()`, so any component using the substrate gets the global shortcut for free.
+- `[A4]` `.storybook/main.ts`'s `stories` glob was `../components/ui/**/*.stories.@(ts|tsx)` only — too narrow the moment a session (this one) puts stories outside `components/ui` (`components/motion`, `components/firing-bar`, `lib/undo`). Broadened to `../components/**/*.stories.@(ts|tsx)` and added `../lib/**/*.stories.@(ts|tsx)`, matching this session's own file layout instead of hardcoding paths for a fixed set of folders.
 
 ## Deferred
 
 Things a spec asked for that were consciously left undone, and why. Empty is the goal.
 
-- _(none — every component, state, and story named in A3's scope is built)_
+- _(none for A3 — every component, state, and story named in A3's scope is built)_
+- `[A4]` Gate item 1's 60fps claim (12 concurrent Firing Bar segments) was verified structurally — `layout`-prop/transform-based resize, zero console/page errors across a headless run of every new story, `motion-firingbar--twelve-concurrent` story built and exercised — but the actual frame-rate number needs a human with the browser Performance panel open; that number can't be produced from this environment. Everything else in every A4 gate item was verified directly (typecheck, lint, a full Storybook build, and a headless Chromium pass over all 11 new stories with console/page-error capture plus an `axe-core` run showing zero violations); a real focus-ordering bug in the Firing Bar's hover-panel trigger (see decisions above) was caught and fixed this way, not left for someone else to find.
 
 ## Known issues
 

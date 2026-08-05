@@ -1,6 +1,7 @@
 import type { Preview, Decorator } from "@storybook/react";
 import React, { useEffect } from "react";
 import localFont from "next/font/local";
+import { MotionProvider } from "../components/motion/motion-provider";
 import "../app/globals.css";
 
 const switzer = localFont({
@@ -23,6 +24,7 @@ const commitMono = localFont({
 const withTheme: Decorator = (Story, context) => {
   const theme = context.globals.theme ?? "dark";
   const density = context.globals.density ?? "comfortable";
+  const reduceMotion = context.globals.motion === "reduce";
 
   useEffect(() => {
     const root = document.documentElement;
@@ -34,7 +36,11 @@ const withTheme: Decorator = (Story, context) => {
   return React.createElement(
     "div",
     { className: "bg-ink-000 p-section-gap text-fg-000", style: { minHeight: "100vh" } },
-    React.createElement(Story),
+    React.createElement(
+      MotionProvider,
+      { forceReducedMotion: reduceMotion },
+      React.createElement(Story),
+    ),
   );
 };
 
@@ -83,6 +89,19 @@ const preview: Preview = {
         items: [
           { value: "comfortable", title: "Comfortable" },
           { value: "compact", title: "Compact" },
+        ],
+        dynamicTitle: true,
+      },
+    },
+    motion: {
+      name: "Motion",
+      description: "prefers-reduced-motion override",
+      defaultValue: "no-preference",
+      toolbar: {
+        icon: "transfer",
+        items: [
+          { value: "no-preference", title: "No preference" },
+          { value: "reduce", title: "Reduce" },
         ],
         dynamicTitle: true,
       },

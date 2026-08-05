@@ -71,6 +71,24 @@
   --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --shadow-floating: 0 16px 48px -12px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --blur-floating: 8px;
+
+  /* ---- AI signal (achromatic) ----
+     Shimmer/EmberEdge are pure luminance deltas, no hue, per DESIGN.md's
+     "AI is a light, not a color." --ai-glow is overridden per theme below
+     (dark brightens toward white, light darkens toward ink) so the effect
+     stays a visible luminance delta on either surface, never a hue.
+     --gradient-spectral is the one sanctioned gradient in the product
+     (SpectralHairline) — built from the existing semantic base hues rather
+     than new literals, so it never diverges from the palette. */
+  --ai-glow: #ffffff;
+  --gradient-spectral: linear-gradient(
+    90deg,
+    var(--red),
+    var(--amber),
+    var(--emerald),
+    var(--blue),
+    var(--violet)
+  );
 }
 
 [data-theme="light"] {
@@ -109,6 +127,11 @@
   --violet-fg: #6248de;
   --violet-bg: rgba(98, 72, 222, 0.12);
   --violet-line: rgba(98, 72, 222, 0.28);
+
+  /* A white luminance delta is invisible against this theme's near-white
+     surfaces, so light mode darkens instead of brightens — same achromatic
+     intent (luminance only, no hue), inverted direction. */
+  --ai-glow: #14171a;
 }
 
 [data-density="compact"] {
@@ -148,6 +171,8 @@
   --color-violet-fg: var(--violet-fg);
   --color-violet-bg: var(--violet-bg);
   --color-violet-line: var(--violet-line);
+
+  --color-ai-glow: var(--ai-glow);
 
   /* radius — utilities like rounded-sm, rounded-md, rounded-lg, rounded-xl */
   --radius-sm: var(--radius-sm);

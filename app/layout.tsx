@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
+import { MotionProvider } from "@/components/motion/motion-provider";
 import "./globals.css";
 
 const switzer = localFont({
@@ -32,7 +33,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       data-density="comfortable"
       className={`${switzer.variable} ${commitMono.variable}`}
     >
-      <body>{children}</body>
+      <body>
+        <MotionProvider>{children}</MotionProvider>
+      </body>
     </html>
   );
 }

@@ -24,33 +24,68 @@ export const motion = { instant, fast, base, slow, spring } as const;
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
-function subscribeToReducedMotion(callback: () => void): () => void {
+/**
+ * The only place in the app that touches matchMedia — consumed exclusively
+ * by MotionProvider's useSyncExternalStore call (components/motion/motion-provider.tsx).
+ * Exported (not file-local) so that provider can live in components/ per
+ * A4's file layout while this module keeps ownership of the subscription
+ * plumbing, matching how every other motion export already lives here.
+ */
+export function subscribeToReducedMotion(callback: () => void): () => void {
   const mql = window.matchMedia(REDUCED_MOTION_QUERY);
   mql.addEventListener("change", callback);
   return () => mql.removeEventListener("change", callback);
 }
 
-function getReducedMotionSnapshot(): boolean {
+export function getReducedMotionSnapshot(): boolean {
   return window.matchMedia(REDUCED_MOTION_QUERY).matches;
 }
 
-function getReducedMotionServerSnapshot(): boolean {
+export function getReducedMotionServerSnapshot(): boolean {
   return false;
 }
 
 /**
- * Reads prefers-reduced-motion via matchMedia, subscribed with
- * useSyncExternalStore. This is intentionally not the root-context version
- * CLAUDE.md/DESIGN.md describe ("read once at the root and provided by
- * context") — that root provider is session A4's scope. Every overlay in A3
- * calls this hook directly instead; the zero-arg/boolean-return signature
- * stays stable so A4 can later swap the internals for a context read
- * without touching any call site.
+ * Populated exactly once, at the root, by MotionProvider. Defaults to
+ * `false` so a component rendered outside the provider degrades to "motion
+ * allowed" rather than throwing — but in practice every render tree in this
+ * app is wrapped (app/layout.tsx for the real app, .storybook/preview.tsx
+ * for every story), so the default should never actually apply.
+ */
+export const MotionContext = React.createContext(false);
+
+/**
+ * Reads the resolved reduced-motion flag from context. This is the same
+ * exported signature every A3 overlay (dialog, popover, toast, drawer,
+ * sheet, hover-card, tooltip, dropdown-menu, context-menu, command-palette)
+ * already calls — only the internals changed, from a per-component
+ * matchMedia subscription to a single context read, per the A3 decision
+ * that flagged this swap as A4's job. No call site needed to change.
  */
 export function useReducedMotion(): boolean {
-  return React.useSyncExternalStore(
-    subscribeToReducedMotion,
-    getReducedMotionSnapshot,
-    getReducedMotionServerSnapshot,
-  );
+  return React.useContext(MotionContext);
+}
+
+export interface ResolvedMotion {
+  instant: MotionToken;
+  fast: MotionToken;
+  base: MotionToken;
+  slow: MotionToken;
+  spring: SpringToken | MotionToken;
+  prefersReducedMotion: boolean;
+}
+
+/**
+ * Resolved motion tokens for the current reduced-motion state, already
+ * zeroed out when needed, so components animate unconditionally off this
+ * output instead of branching on the media query themselves. Under reduced
+ * motion every tier — including spring, which has no duration of its own —
+ * collapses to `instant`, the 90ms crossfade CLAUDE.md specifies.
+ */
+export function useMotion(): ResolvedMotion {
+  const prefersReducedMotion = useReducedMotion();
+  if (prefersReducedMotion) {
+    return { instant, fast: instant, base: instant, slow: instant, spring: instant, prefersReducedMotion };
+  }
+  return { instant, fast, base, slow, spring, prefersReducedMotion };
 }
