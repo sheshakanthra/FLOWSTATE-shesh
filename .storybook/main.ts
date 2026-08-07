@@ -10,7 +10,11 @@ import type { StorybookConfig } from "@storybook/nextjs";
 process.env.__NEXT_PRIVATE_RENDER_WORKER = "1";
 
 const config: StorybookConfig = {
-  stories: ["../components/**/*.stories.@(ts|tsx)", "../lib/**/*.stories.@(ts|tsx)"],
+  stories: [
+    "../components/**/*.stories.@(ts|tsx)",
+    "../lib/**/*.stories.@(ts|tsx)",
+    "../features/**/*.stories.@(ts|tsx)",
+  ],
   addons: ["@storybook/addon-essentials", "@storybook/addon-a11y", "@storybook/addon-interactions"],
   framework: {
     name: "@storybook/nextjs",

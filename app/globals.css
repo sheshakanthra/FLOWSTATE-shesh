@@ -38,6 +38,29 @@
   }
 }
 
+/*
+  React Flow theming (B1) — overrides the library's own CSS custom
+  properties from our tokens rather than any of its packaged stylesheets.
+  Only `base.css` is imported (features/agents/canvas/index.tsx): the
+  necessary structural/layout rules, without `style.css`'s default color
+  theme layered on top. Node/edge/background colors that route through
+  React Flow's own component props (Background, MiniMap) are set there
+  instead of here — this block only covers what has no prop equivalent:
+  the default 'default'-type edge, the connection line, and the box-select
+  rectangle.
+*/
+.react-flow {
+  --xy-edge-stroke: var(--color-ink-400);
+  --xy-edge-stroke-width: 1.5;
+  --xy-edge-stroke-selected: var(--color-blue-fg);
+
+  --xy-connectionline-stroke: var(--color-blue-fg);
+  --xy-connectionline-stroke-width: 1.5;
+
+  --xy-selection-background-color: var(--color-blue-bg);
+  --xy-selection-border: 1px solid var(--color-blue-fg);
+}
+
 @keyframes accordion-down {
   from {
     height: 0;
