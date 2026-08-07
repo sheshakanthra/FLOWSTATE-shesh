@@ -63,13 +63,6 @@ export const Open: Story = {
           // Select's Open story. FocusScope makes the trigger genuinely
           // unreachable, not a defect here.
           { id: "aria-hidden-focus", enabled: false },
-          // Button's danger variant (bg-red-bg/text-red-fg) clears WCAG AA
-          // over ink-000 (its own story's background) but falls just short
-          // over ink-300 (this session's new floating-layer/dialog surface,
-          // which A2 never composited against). Pre-existing token gap in
-          // Button/tokens.css, outside A3's file scope — tracked in
-          // PROGRESS.md's Known Issues rather than patched here.
-          { id: "color-contrast", enabled: false },
         ],
       },
     },
@@ -92,9 +85,6 @@ export const FocusReturn: Story = {
       config: {
         rules: [
           { id: "aria-hidden-focus", enabled: false },
-          // See Open story: Button's danger variant on the ink-300 dialog
-          // surface, pre-existing token gap tracked in PROGRESS.md.
-          { id: "color-contrast", enabled: false },
         ],
       },
     },

@@ -53,23 +53,6 @@ const columns: ColumnDef<AgentRow>[] = [
 
 const meta: Meta = {
   title: "Patterns/DataTable",
-  parameters: {
-    a11y: {
-      config: {
-        rules: [
-          // Badge's emerald/amber/red triples were only ever validated (in A2)
-          // against the ink-000 canvas its own stories render on. Composited
-          // over ink-100 — DataTable's own surface, and correctly so per the
-          // Card convention — several of them fall just under 4.5:1. Same
-          // class of pre-existing token gap as red-fg-on-ink-300 (see Dialog's
-          // Open story and PROGRESS.md's Known Issues), newly surfaced here by
-          // being the first place badges render on an ink-100 surface rather
-          // than ink-000. Badge/tokens.css territory, outside A5's scope.
-          { id: "color-contrast", enabled: false },
-        ],
-      },
-    },
-  },
 };
 
 export default meta;

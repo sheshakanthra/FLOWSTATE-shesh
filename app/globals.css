@@ -12,6 +12,10 @@
     transition-duration: 160ms;
     transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
   }
+  .transition-base {
+    transition-duration: 240ms;
+    transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  }
 
   /* CSS-keyframe mirror of lib/motion.ts's `base` token, scoped to Radix
      Accordion's content-height variable — a value Framer Motion can't

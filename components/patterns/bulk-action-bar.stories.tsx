@@ -28,19 +28,6 @@ export const Static: Story = {
       <BulkActionBar {...args} />
     </div>
   ),
-  parameters: {
-    a11y: {
-      config: {
-        rules: [
-          // Button's danger variant (bg-red-bg/text-red-fg) clears WCAG AA over
-          // ink-000 but falls short over ink-300 (this bar's floating-layer
-          // surface) — the same pre-existing token gap documented on Dialog's
-          // Open story, not something this component can fix on its own.
-          { id: "color-contrast", enabled: false },
-        ],
-      },
-    },
-  },
 };
 
 export const Interactive: Story = {

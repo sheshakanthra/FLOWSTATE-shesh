@@ -40,9 +40,9 @@
   --amber-bg: rgba(224, 163, 60, 0.12);
   --amber-line: rgba(224, 163, 60, 0.28);
 
-  --red-fg: #e5484d;
-  --red-bg: rgba(229, 72, 77, 0.12);
-  --red-line: rgba(229, 72, 77, 0.28);
+  --red-fg: #e85a5e;
+  --red-bg: rgba(232, 90, 94, 0.12);
+  --red-line: rgba(232, 90, 94, 0.28);
 
   --blue-fg: #4b93f5;
   --blue-bg: rgba(75, 147, 245, 0.12);
@@ -108,13 +108,13 @@
   --fg-300: #a6acb2; /* disabled, placeholder */
 
   /* ---- semantic triples — same hue family, darkened for AA contrast on a light surface ---- */
-  --emerald-fg: #1c8f57;
-  --emerald-bg: rgba(28, 143, 87, 0.12);
-  --emerald-line: rgba(28, 143, 87, 0.28);
+  --emerald-fg: #177849;
+  --emerald-bg: rgba(23, 120, 73, 0.12);
+  --emerald-line: rgba(23, 120, 73, 0.28);
 
-  --amber-fg: #96660b;
-  --amber-bg: rgba(150, 102, 11, 0.12);
-  --amber-line: rgba(150, 102, 11, 0.28);
+  --amber-fg: #8f610a;
+  --amber-bg: rgba(143, 97, 10, 0.12);
+  --amber-line: rgba(143, 97, 10, 0.28);
 
   --red-fg: #c4262c;
   --red-bg: rgba(196, 38, 44, 0.12);

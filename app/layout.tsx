@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { MotionProvider } from "@/components/motion/motion-provider";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
 const switzer = localFont({
@@ -34,7 +35,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${switzer.variable} ${commitMono.variable}`}
     >
       <body>
-        <MotionProvider>{children}</MotionProvider>
+        <MotionProvider>
+          <TooltipProvider delayDuration={300}>{children}</TooltipProvider>
+        </MotionProvider>
       </body>
     </html>
   );
