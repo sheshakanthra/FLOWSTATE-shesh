@@ -56,3 +56,8 @@ export function isCopyShortcut(event: KeyboardEvent): boolean {
 export function isPasteShortcut(event: KeyboardEvent): boolean {
   return hasModifier(event) && event.key.toLowerCase() === "v";
 }
+
+/** ⌘D -- duplicate the current selection in place (offset, reselected), without touching the clipboard. */
+export function isDuplicateShortcut(event: KeyboardEvent): boolean {
+  return hasModifier(event) && event.key.toLowerCase() === "d";
+}

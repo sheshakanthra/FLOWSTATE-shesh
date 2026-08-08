@@ -3,9 +3,9 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { applyEdgeChanges, applyNodeChanges, type Edge, type EdgeChange, type NodeChange } from "@xyflow/react";
-import type { GenericNodeType } from "../nodes/generic-node";
+import type { AgentNode } from "../nodes/registry";
 
-export type CanvasNode = GenericNodeType;
+export type CanvasNode = AgentNode;
 export type CanvasEdge = Edge;
 
 interface GraphState {
@@ -24,6 +24,11 @@ interface GraphState {
    *  computed by the caller (features/agents/canvas/index.tsx) -- this store
    *  only ever applies a final, already-resolved set. */
   setSelection: (nodeIds: string[], edgeIds: string[]) => void;
+
+  /** Flips a single node's `disabled` visual state -- the only per-node data
+   *  mutation this session ships a UI affordance for (the node context
+   *  menu's "Disable/Enable node"), since config editing itself is B3's job. */
+  toggleNodeDisabled: (nodeId: string) => void;
 }
 
 /**
@@ -76,12 +81,37 @@ export const useGraphStore = create<GraphState>()(
         state.edges = edges;
       }),
 
+    /**
+     * Rebuilds every node/edge object rather than mutating `.selected` in
+     * place, even for entries whose value doesn't change. React Flow resets
+     * its own internal "is this node selected" bookkeeping the instant a new
+     * box-select drag starts (see canvas/index.tsx's decision comment on the
+     * additive shift-drag override) -- that reset never reaches this store
+     * (onNodesChange drops `select`-type changes), but it does mean React
+     * Flow's internal copy briefly disagrees with ours. If a node's
+     * `selected` value happens to be unchanged from before (e.g. it was
+     * already selected and a second, additive box-select re-confirms that),
+     * immer's structural sharing would keep the exact same object reference
+     * for it -- and React Flow, seeing a reference-identical node object,
+     * has nothing to prompt it to re-sync from our (correct) value over its
+     * own (stale, reset-to-false) internal one. A fresh object reference on
+     * every call forces that re-sync unconditionally. Found by tracing a
+     * real failure: the store's own `selected` flags were verified correct
+     * after an additive drag, but the rendered `.selected` CSS class on an
+     * already-selected node silently didn't update.
+     */
     setSelection: (nodeIds, edgeIds) =>
       set((state) => {
         const nodeIdSet = new Set(nodeIds);
         const edgeIdSet = new Set(edgeIds);
-        for (const node of state.nodes) node.selected = nodeIdSet.has(node.id);
-        for (const edge of state.edges) edge.selected = edgeIdSet.has(edge.id);
+        state.nodes = state.nodes.map((node) => ({ ...node, selected: nodeIdSet.has(node.id) }));
+        state.edges = state.edges.map((edge) => ({ ...edge, selected: edgeIdSet.has(edge.id) }));
+      }),
+
+    toggleNodeDisabled: (nodeId) =>
+      set((state) => {
+        const node = state.nodes.find((candidate) => candidate.id === nodeId);
+        if (node) node.data.disabled = !node.data.disabled;
       }),
   })),
 );

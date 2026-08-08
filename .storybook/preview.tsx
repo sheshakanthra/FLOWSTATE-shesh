@@ -2,6 +2,7 @@ import type { Preview, Decorator } from "@storybook/react";
 import React, { useEffect } from "react";
 import localFont from "next/font/local";
 import { MotionProvider } from "../components/motion/motion-provider";
+import { Toaster } from "../components/ui/toast";
 import "../app/globals.css";
 
 const switzer = localFont({
@@ -40,6 +41,7 @@ const withTheme: Decorator = (Story, context) => {
       MotionProvider,
       { forceReducedMotion: reduceMotion },
       React.createElement(Story),
+      React.createElement(Toaster),
     ),
   );
 };

@@ -71,10 +71,19 @@ test("box-select takes only fully-enclosed nodes; shift-drag adds to the selecti
   // the left 2x2 block (int-0, int-1, int-3, int-4 at flow x<=400) without
   // enclosing the right column (int-2, int-5 at flow x=700) -- their left
   // edge sits well outside this box.
+  //
+  // Dragged bottom-right-to-top-left (not top-left-to-bottom-right) so the
+  // drag *starts* on empty pane space: B2's NodeLibraryPanel now docks at
+  // the pane's actual top-left corner, covering the point a top-left-first
+  // drag would have started from. The resulting selection rectangle -- and
+  // therefore which nodes end up enclosed -- is identical either way; only
+  // the mousedown's starting corner changes. The drag's own move/up events
+  // are tracked independent of whatever's visually underneath once it has
+  // started, so ending over the panel is fine.
   await page.keyboard.down("Shift");
-  await page.mouse.move(paneBox.x + 40, paneBox.y + 40);
+  await page.mouse.move(paneBox.x + 650, paneBox.y + 450);
   await page.mouse.down();
-  await page.mouse.move(paneBox.x + 650, paneBox.y + 450, { steps: 10 });
+  await page.mouse.move(paneBox.x + 40, paneBox.y + 40, { steps: 10 });
   await page.mouse.up();
   await page.keyboard.up("Shift");
 
