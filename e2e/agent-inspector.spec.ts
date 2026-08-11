@@ -116,12 +116,12 @@ test("multi-select: changing the shared Model field updates all selected nodes a
   const modelTrigger = page.locator("#node-config-model");
   await expect(modelTrigger).toBeVisible();
   await modelTrigger.click();
-  await page.getByRole("option", { name: "Gemma 2 9B" }).click();
+  await page.getByRole("option", { name: "GPT OSS 20B" }).click();
 
   const summaries = page.locator(".react-flow__node [data-node-type]");
   await expect(summaries).toHaveCount(3);
   for (const summary of await summaries.all()) {
-    await expect(summary).toContainText("Gemma 2 9B");
+    await expect(summary).toContainText("GPT OSS 20B");
   }
 
   // Give the 300ms coalescing idle window time to flush into an undo entry.
@@ -130,7 +130,7 @@ test("multi-select: changing the shared Model field updates all selected nodes a
   // One ⌘Z reverses all three nodes at once, not just the last one.
   await page.keyboard.press("Control+z");
   for (const summary of await summaries.all()) {
-    await expect(summary).not.toContainText("Gemma 2 9B");
+    await expect(summary).not.toContainText("GPT OSS 20B");
   }
 });
 

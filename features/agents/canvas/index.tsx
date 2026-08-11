@@ -7,6 +7,7 @@ import {
   SelectionMode,
   useReactFlow,
   type Connection,
+  type EdgeTypes,
   type NodeChange,
   type OnConnect,
   type OnMove,
@@ -35,6 +36,7 @@ import { CanvasBackground } from "./background";
 import { CanvasMiniMap } from "./minimap";
 import { CanvasControls } from "./controls";
 import { CanvasContextMenu } from "./context-menu";
+import { RunEdge } from "./run-edge";
 import { NodeLibraryPanel, NODE_LIBRARY_DRAG_MIME } from "../library";
 import {
   FIT_VIEW_PADDING,
@@ -50,6 +52,12 @@ import {
   isZoomInShortcut,
   isZoomOutShortcut,
 } from "../lib/viewport";
+
+// Registered under "default" -- no edge in this app ever sets its own
+// `type`, so this replaces React Flow's built-in bezier edge everywhere,
+// adding B4's live "traveling pulse" (run-edge.tsx) without any per-edge
+// opt-in.
+const edgeTypes: EdgeTypes = { default: RunEdge };
 
 /** Centered prompt over the (still interactive) grid rather than a blank
  *  canvas -- the grid stays panable/zoomable behind it. */
@@ -545,6 +553,7 @@ function CanvasInner({ initialGraph, initialViewport }: CanvasProps) {
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={handleConnect}

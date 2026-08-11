@@ -24,11 +24,22 @@ export const runStepStatusEnum = pgEnum("run_step_status", [
   "failed",
   "skipped",
 ]);
+// One value per registered node type (features/agents/nodes/registry.ts) --
+// B3's port-types.ts note ("resist adding a sixth port type") doesn't apply
+// here; every node in a graph produces a run_steps row (B4 gate item 2), so
+// this enum has to cover all ten, not just the four kinds that existed
+// before any node actually executed.
 export const runStepKindEnum = pgEnum("run_step_kind", [
+  "trigger",
   "llm_call",
   "tool_call",
   "condition",
+  "loop",
+  "memory",
+  "knowledge",
   "transform",
+  "output",
+  "human_in_loop",
 ]);
 export const copilotRoleEnum = pgEnum("copilot_role", ["user", "assistant", "system"]);
 export const toolCallStatusEnum = pgEnum("tool_call_status", [
@@ -146,6 +157,10 @@ export const runSteps = pgTable("run_steps", {
   runId: uuid("run_id")
     .notNull()
     .references(() => agentRuns.id, { onDelete: "cascade" }),
+  // The graph node this step executed, e.g. "node-<uuid>" -- not a real
+  // Postgres uuid, since createNode()/cloneNodes() (registry.ts) mint ids
+  // as a "node-" prefixed string, never a bare UUID.
+  nodeId: text("node_id").notNull(),
   stepIndex: integer("step_index").notNull(),
   name: text("name").notNull(),
   kind: runStepKindEnum("kind").notNull(),
@@ -153,8 +168,28 @@ export const runSteps = pgTable("run_steps", {
   startedAt: timestamp("started_at", { withTimezone: true }),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
   durationMs: integer("duration_ms"),
+  // The node's *resolved* input -- {{token}} variables already interpolated
+  // and port-wired values already substituted -- not the raw config. This
+  // is the field B5's replay and this session's own gate item 5 ("shows the
+  // error with the failing node's resolved input") both depend on; B4's
+  // spec explicitly calls out recording more than looks necessary right now.
   input: jsonb("input"),
   output: jsonb("output"),
+  // Only meaningful for an llm_call step; null for every other kind.
+  model: text("model"),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  // Fractional, not whole-number, cents: a short test-console prompt costs
+  // well under one cent at Groq's real per-token rates (lib/llm/models.ts),
+  // and rounding to an integer would collapse gate item 7's "within 5% of
+  // Groq's reported usage" check to a meaningless 0-vs-0 comparison for
+  // exactly the size of run this console is built to run.
+  costCents: numeric("cost_cents", { precision: 10, scale: 6 }),
+  // 1 on a step's first (and typically only) execution; >1 if retry.ts
+  // retried it after a transient failure. Recorded per B4's spec item 1
+  // ("per-node retry policy") so a retried step is distinguishable from a
+  // clean one, not just folded into a single opaque row.
+  attempt: integer("attempt").notNull().default(1),
   errorMessage: text("error_message"),
 });
 

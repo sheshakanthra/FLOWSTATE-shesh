@@ -1,5 +1,7 @@
+import { eq } from "drizzle-orm";
 import { hashPassword } from "@/lib/auth/password";
 import { withScope } from "@/lib/repos/db";
+import { DEFAULT_GROQ_MODEL } from "@/lib/llm/models";
 import { client, db } from "./client";
 import {
   activityEvents,
@@ -33,6 +35,86 @@ function pick<T>(items: T[]): T {
 function timeDaysAgo(daysAgo: number): Date {
   const jitterMs = randomInt(8, 20) * 60 * 60 * 1000 + randomInt(0, 59) * 60 * 1000;
   return new Date(now - daysAgo * DAY_MS - (DAY_MS - jitterMs));
+}
+
+/**
+ * B4 gate item 1 needs a real, runnable, 6-node graph -- nothing seeded
+ * one produces this by construction (`agentVersions.graph` is hardcoded
+ * empty for every agent above), so this session adds one, hand-built
+ * rather than routed through `features/agents/nodes/registry.ts`'s
+ * `createNode` -- this script runs under plain `tsx` (no DOM), and every
+ * other write in this file already constructs rows directly rather than
+ * through feature code (see PROGRESS.md's A6 decisions).
+ *
+ * Every edge here respects the real port-type compatibility rule
+ * (`features/agents/lib/port-types.ts`: exact match, or either side
+ * `"any"`) -- a Trigger's only output is `signal`, which cannot connect
+ * directly to Knowledge's `text`-typed `query` input, so Transform (whose
+ * ports are both `"any"`) bridges the two, exactly the way a real user
+ * building this graph in the Inspector would have to. This is a genuine
+ * constraint of B2's port system, not a demo shortcut:
+ * trigger.out(signal) -> transform.input(any) -> transform.output(any) ->
+ * knowledge.query(text) -> knowledge.results(document) ->
+ * llm.context(document), llm.response(text) -> condition.in(any) ->
+ * condition.true(signal) -> output.in(any).
+ */
+function buildRecallSchedulerGraph() {
+  const nodes = [
+    {
+      id: "seed-recall-trigger",
+      type: "trigger",
+      position: { x: 0, y: 120 },
+      data: { label: "Nightly schedule", config: { triggerType: "schedule", schedule: "0 9 * * *" } },
+    },
+    {
+      id: "seed-recall-transform",
+      type: "transform",
+      position: { x: 220, y: 120 },
+      data: { label: "Prep query", config: { expression: "" } },
+    },
+    {
+      id: "seed-recall-knowledge",
+      type: "knowledge",
+      position: { x: 440, y: 120 },
+      data: { label: "Overdue patients", config: { sourceId: "overdue-patients", topK: 5 } },
+    },
+    {
+      id: "seed-recall-llm",
+      type: "llm",
+      position: { x: 660, y: 120 },
+      data: {
+        label: "Draft reminder",
+        config: {
+          model: DEFAULT_GROQ_MODEL,
+          systemPrompt:
+            "Draft a warm, brief SMS reminding a dental patient it's time to book their recall cleaning. Keep it under 300 characters, friendly, and end with a call to action.",
+          temperature: 0.7,
+        },
+      },
+    },
+    {
+      id: "seed-recall-condition",
+      type: "condition",
+      position: { x: 880, y: 120 },
+      data: { label: "Draft looks good?", config: { expression: "" } },
+    },
+    {
+      id: "seed-recall-output",
+      type: "output",
+      position: { x: 1100, y: 120 },
+      data: { label: "Send SMS", config: { destination: "twilio-sms" } },
+    },
+  ];
+
+  const edges = [
+    { id: "seed-recall-e1", source: "seed-recall-trigger", sourceHandle: "out", target: "seed-recall-transform", targetHandle: "input" },
+    { id: "seed-recall-e2", source: "seed-recall-transform", sourceHandle: "output", target: "seed-recall-knowledge", targetHandle: "query" },
+    { id: "seed-recall-e3", source: "seed-recall-knowledge", sourceHandle: "results", target: "seed-recall-llm", targetHandle: "context" },
+    { id: "seed-recall-e4", source: "seed-recall-llm", sourceHandle: "response", target: "seed-recall-condition", targetHandle: "in" },
+    { id: "seed-recall-e5", source: "seed-recall-condition", sourceHandle: "true", target: "seed-recall-output", targetHandle: "in" },
+  ];
+
+  return { nodes, edges };
 }
 
 async function main() {
@@ -119,6 +201,19 @@ async function main() {
       .returning(),
   );
   const agentByKey = Object.fromEntries(agentDefs.map((def, i) => [def.key, insertedAgents[i]!]));
+
+  // Recall Scheduler gets a real, runnable graph in `agents.graph_jsonb`
+  // (the live-editing draft B3's autosave writes to and B4's test console
+  // runs from) -- the other three agents' graphs stay empty, matching
+  // their own narrative ("Listing Copy Generator" is still a draft with no
+  // work done on it yet, etc.).
+  const recallGraph = buildRecallSchedulerGraph();
+  await withScope({ workspaceId: workspace.id }, (tx) =>
+    tx
+      .update(agents)
+      .set({ graphJsonb: recallGraph, viewportJsonb: { x: 0, y: 0, zoom: 1 } })
+      .where(eq(agents.id, agentByKey.recall!.id)),
+  );
 
   const insertedVersions = await withScope({ workspaceId: workspace.id }, (tx) =>
     tx
@@ -312,6 +407,11 @@ async function main() {
       stepRows.push({
         workspaceId: workspace.id,
         runId: run.id,
+        // These fixture runs aren't tied to any real graph (see the B4
+        // decision below on why `agents.graph_jsonb` stayed empty for three
+        // of the four seeded agents) -- a deterministic, clearly-synthetic
+        // id per agent/step position, not a real "node-<uuid>".
+        nodeId: `seed-${plan.agentKey}-${stepIndex}`,
         stepIndex,
         name: step.name,
         kind: step.kind,

@@ -1,0 +1,1 @@
+ALTER TABLE "run_steps" ALTER COLUMN "cost_cents" SET DATA TYPE numeric(10, 6);

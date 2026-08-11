@@ -4,6 +4,8 @@ import * as React from "react";
 import type { NodeProps } from "@xyflow/react";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Shimmer } from "@/components/motion/shimmer";
+import { useRunStore } from "../store/run-store";
 import type { AgentNode, AnyNodeTypeDefinition } from "./registry";
 import { Port } from "./port";
 
@@ -36,17 +38,14 @@ function NodeShellComponent({ id, data, selected, isConnectable, definition }: N
   const Icon = definition.icon;
   const summary = configResult.success ? definition.summary(configResult.data) : "Invalid configuration";
 
-  return (
-    <div
-      data-render-count={renderCount.current}
-      data-node-type={definition.id}
-      aria-disabled={isDisabled || undefined}
-      className={cn(
-        "relative flex min-w-44 flex-col rounded-lg border bg-ink-100 shadow-card",
-        selected ? "border-blue-fg" : isInvalid ? "border-red-line" : "border-ink-400",
-        isDisabled && "opacity-50",
-      )}
-    >
+  // Only this node's own entry in the map is read -- a Zustand primitive
+  // selector, so another node's status changing never re-renders this one.
+  // See run-store.ts's own doc comment for why run feedback lives in its
+  // own store rather than graph-store (B1's re-render-isolation precedent).
+  const runStatus = useRunStore((state) => state.nodeStatuses[id]);
+
+  const content = (
+    <>
       <div className="flex items-center gap-2 px-3 py-2">
         <div
           aria-hidden="true"
@@ -90,6 +89,32 @@ function NodeShellComponent({ id, data, selected, isConnectable, definition }: N
           isConnectable={isConnectable}
         />
       ))}
+    </>
+  );
+
+  return (
+    <div
+      data-render-count={renderCount.current}
+      data-node-type={definition.id}
+      data-run-status={runStatus}
+      aria-disabled={isDisabled || undefined}
+      className={cn(
+        "relative flex min-w-44 flex-col rounded-lg border bg-ink-100 shadow-card",
+        selected
+          ? "border-blue-fg"
+          : runStatus === "failed"
+            ? "border-red-line"
+            : runStatus === "succeeded"
+              ? "border-emerald-line"
+              : runStatus === "running"
+                ? "border-blue-fg"
+                : isInvalid
+                  ? "border-red-line"
+                  : "border-ink-400",
+        (isDisabled || runStatus === "skipped") && "opacity-50",
+      )}
+    >
+      {runStatus === "running" ? <Shimmer className="rounded-[inherit]">{content}</Shimmer> : content}
     </div>
   );
 }
