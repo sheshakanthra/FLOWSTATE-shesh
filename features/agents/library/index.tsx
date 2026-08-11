@@ -14,6 +14,7 @@ import {
 } from "../nodes/registry";
 import { useGraphStore } from "../store/graph-store";
 import { useCanvasStore } from "../store/canvas-store";
+import { registerGraphUndo } from "../lib/graph-undo";
 import { searchNodeTypes } from "./search";
 
 /** Custom drag MIME type carrying the node type id being dragged from the
@@ -65,6 +66,11 @@ export function NodeLibraryPanel() {
       addNode(node);
       setSelection([node.id], []);
       useCanvasStore.getState().setSelectedNodeIds([node.id]);
+      registerGraphUndo(
+        "Added node",
+        () => useGraphStore.getState().removeNodesWithEdges([node.id]),
+        () => useGraphStore.getState().restoreFragment([node], []),
+      );
     },
     [reactFlow, addNode, setSelection],
   );

@@ -7,6 +7,7 @@ import {
   SelectionMode,
   useReactFlow,
   type Connection,
+  type NodeChange,
   type OnConnect,
   type OnMove,
   type OnSelectionChangeFunc,
@@ -16,12 +17,14 @@ import { Zap } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import { toast } from "@/components/ui/toast";
 import { useMotion } from "@/lib/motion";
+import { useUndoShortcuts } from "@/lib/undo/shortcuts";
 import { useCanvasStore } from "../store/canvas-store";
-import { useGraphStore, type CanvasEdge } from "../store/graph-store";
+import { useGraphStore, type CanvasEdge, type CanvasNode } from "../store/graph-store";
 import { cloneNodes, createNode, generateEdgeId, getNodeType, nodeTypes } from "../nodes/registry";
 import { arePortTypesCompatible } from "../lib/port-types";
 import { findCycle } from "../lib/cycle-detect";
 import { isTypeCompatibleConnection, validateConnection } from "../lib/validation";
+import { registerGraphUndo } from "../lib/graph-undo";
 import {
   getKeyboardConnectionState,
   resetKeyboardConnection,
@@ -59,7 +62,13 @@ function CanvasEmptyState() {
       x: window.innerWidth / 2,
       y: window.innerHeight / 2,
     });
-    addNode(createNode("trigger", center));
+    const node = createNode("trigger", center);
+    addNode(node);
+    registerGraphUndo(
+      "Added node",
+      () => useGraphStore.getState().removeNodesWithEdges([node.id]),
+      () => useGraphStore.getState().restoreFragment([node], []),
+    );
   }, [reactFlow, addNode]);
 
   return (
@@ -75,17 +84,95 @@ function CanvasEmptyState() {
   );
 }
 
-function CanvasInner() {
+export interface CanvasProps {
+  /** Server-loaded graph to hydrate the (module-global) graph store with on
+   *  first paint -- see the `useLayoutEffect` below for why this can't just
+   *  be the store's own initial state. Omitted entirely by every existing
+   *  Storybook story, which continue seeding the store directly the way
+   *  B1/B2 already established. */
+  initialGraph?: { nodes: CanvasNode[]; edges: CanvasEdge[] };
+  initialViewport?: { x: number; y: number; zoom: number };
+}
+
+function CanvasInner({ initialGraph, initialViewport }: CanvasProps) {
   const reactFlow = useReactFlow();
   const nodes = useGraphStore((state) => state.nodes);
   const edges = useGraphStore((state) => state.edges);
-  const onNodesChange = useGraphStore((state) => state.onNodesChange);
+  const rawOnNodesChange = useGraphStore((state) => state.onNodesChange);
   const onEdgesChange = useGraphStore((state) => state.onEdgesChange);
+
+  /**
+   * Runs once, synchronously before the browser paints (useLayoutEffect,
+   * not useEffect) -- graph-store/canvas-store are plain module-level
+   * singletons, not SSR-safe per-request state, so hydration has to happen
+   * client-side in an effect rather than during render (mutating a shared
+   * module during render would leak between concurrent server requests).
+   * Running it in the layout phase means the very first thing a user sees
+   * is the real graph, not a one-frame flash of the empty-canvas state --
+   * `<ReactFlow defaultViewport>` below still needs the real starting
+   * viewport as a genuine prop, though, since that one *is* read exactly
+   * once on ReactFlow's own first render, before this effect would ever run.
+   */
+  React.useLayoutEffect(() => {
+    if (initialGraph) useGraphStore.getState().setGraph(initialGraph.nodes, initialGraph.edges);
+    if (initialViewport) useCanvasStore.getState().setViewport(initialViewport);
+  }, []);
   const setGraphSelection = useGraphStore((state) => state.setSelection);
   const { base } = useMotion();
   const duration = base.duration * 1000;
 
+  // Guarantees the global ⌘Z/⌘⇧Z document listener is bound for as long as
+  // the canvas is mounted -- ref-counted, so it's harmless if the Inspector
+  // (or anything else) also calls this.
+  useUndoShortcuts();
+
   const [contextNodeId, setContextNodeId] = React.useState<string | null>(null);
+
+  /**
+   * Node-move undo (gate item 3). React Flow emits a "position" NodeChange
+   * per dragged node, with `dragging: true` on every frame of the drag and
+   * a final `dragging: false` on release -- multiple nodes dragged together
+   * (a multi-selection drag) land in the *same* onNodesChange call, one
+   * change per node. Capturing each node's pre-drag position on its first
+   * `dragging: true` sighting and diffing against the final `dragging:
+   * false` position lets a whole multi-node drag register as exactly one
+   * undo step, not one per node.
+   */
+  const dragStartPositionsRef = React.useRef<Map<string, { x: number; y: number }>>(new Map());
+  const handleNodesChange = React.useCallback(
+    (changes: NodeChange<CanvasNode>[]) => {
+      for (const change of changes) {
+        if (change.type !== "position" || !change.dragging) continue;
+        if (dragStartPositionsRef.current.has(change.id)) continue;
+        const node = useGraphStore.getState().nodes.find((candidate) => candidate.id === change.id);
+        if (node) dragStartPositionsRef.current.set(change.id, { ...node.position });
+      }
+
+      rawOnNodesChange(changes);
+
+      const moved: { nodeId: string; from: { x: number; y: number }; to: { x: number; y: number } }[] = [];
+      for (const change of changes) {
+        if (change.type !== "position" || change.dragging !== false || !change.position) continue;
+        const from = dragStartPositionsRef.current.get(change.id);
+        dragStartPositionsRef.current.delete(change.id);
+        if (from && (from.x !== change.position.x || from.y !== change.position.y)) {
+          moved.push({ nodeId: change.id, from, to: { ...change.position } });
+        }
+      }
+      if (moved.length > 0) {
+        registerGraphUndo(
+          moved.length === 1 ? "Moved node" : `Moved ${moved.length} nodes`,
+          () => {
+            for (const entry of moved) useGraphStore.getState().setNodePosition(entry.nodeId, entry.from);
+          },
+          () => {
+            for (const entry of moved) useGraphStore.getState().setNodePosition(entry.nodeId, entry.to);
+          },
+        );
+      }
+    },
+    [rawOnNodesChange],
+  );
 
   /**
    * React Flow's own box-select always resets the selection the instant a
@@ -163,15 +250,19 @@ function CanvasInner() {
       toast({ title: "Connection rejected", description: result.reason, variant: "danger" });
       return;
     }
-    state.addEdges([
-      {
-        id: generateEdgeId(),
-        source: connection.source,
-        sourceHandle: connection.sourceHandle,
-        target: connection.target,
-        targetHandle: connection.targetHandle,
-      },
-    ]);
+    const newEdge: CanvasEdge = {
+      id: generateEdgeId(),
+      source: connection.source,
+      sourceHandle: connection.sourceHandle,
+      target: connection.target,
+      targetHandle: connection.targetHandle,
+    };
+    state.addEdges([newEdge]);
+    registerGraphUndo(
+      "Connected nodes",
+      () => useGraphStore.getState().removeEdgesByIds([newEdge.id]),
+      () => useGraphStore.getState().addEdges([newEdge]),
+    );
   }, []);
 
   const handleDragOver = React.useCallback((event: React.DragEvent) => {
@@ -190,6 +281,11 @@ function CanvasInner() {
       useGraphStore.getState().addNode(node);
       setGraphSelection([node.id], []);
       useCanvasStore.getState().setSelectedNodeIds([node.id]);
+      registerGraphUndo(
+        "Added node",
+        () => useGraphStore.getState().removeNodesWithEdges([node.id]),
+        () => useGraphStore.getState().restoreFragment([node], []),
+      );
     },
     [reactFlow, setGraphSelection],
   );
@@ -228,6 +324,11 @@ function CanvasInner() {
         const ids = pasted.map((node) => node.id);
         setGraphSelection(ids, []);
         useCanvasStore.getState().setSelectedNodeIds(ids);
+        registerGraphUndo(
+          pasted.length === 1 ? "Pasted node" : `Pasted ${pasted.length} nodes`,
+          () => useGraphStore.getState().removeNodesWithEdges(ids),
+          () => useGraphStore.getState().restoreFragment(pasted, []),
+        );
       } else if (isDuplicateShortcut(event)) {
         const selected = useGraphStore.getState().nodes.filter((node) => node.selected);
         const first = selected[0];
@@ -239,6 +340,35 @@ function CanvasInner() {
         const ids = duplicated.map((node) => node.id);
         setGraphSelection(ids, []);
         useCanvasStore.getState().setSelectedNodeIds(ids);
+        registerGraphUndo(
+          duplicated.length === 1 ? "Duplicated node" : `Duplicated ${duplicated.length} nodes`,
+          () => useGraphStore.getState().removeNodesWithEdges(ids),
+          () => useGraphStore.getState().restoreFragment(duplicated, []),
+        );
+      } else if (event.key === "Delete" || event.key === "Backspace") {
+        const state = useGraphStore.getState();
+        const selectedNodeIds = state.nodes.filter((node) => node.selected).map((node) => node.id);
+        const selectedEdgeIds = state.edges.filter((edge) => edge.selected).map((edge) => edge.id);
+        if (selectedNodeIds.length === 0 && selectedEdgeIds.length === 0) return;
+        event.preventDefault();
+
+        if (selectedNodeIds.length > 0) {
+          const { removedNodes, removedEdges } = state.removeNodesWithEdges(selectedNodeIds);
+          setGraphSelection([], []);
+          useCanvasStore.getState().setSelectedNodeIds([]);
+          registerGraphUndo(
+            removedNodes.length === 1 ? "Deleted node" : `Deleted ${removedNodes.length} nodes`,
+            () => useGraphStore.getState().restoreFragment(removedNodes, removedEdges),
+            () => useGraphStore.getState().removeNodesWithEdges(removedNodes.map((node) => node.id)),
+          );
+        } else {
+          const removedEdges = state.removeEdgesByIds(selectedEdgeIds);
+          registerGraphUndo(
+            removedEdges.length === 1 ? "Disconnected nodes" : `Removed ${removedEdges.length} connections`,
+            () => useGraphStore.getState().restoreFragment([], removedEdges),
+            () => useGraphStore.getState().removeEdgesByIds(removedEdges.map((edge) => edge.id)),
+          );
+        }
       }
     }
 
@@ -415,7 +545,7 @@ function CanvasInner() {
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
-          onNodesChange={onNodesChange}
+          onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={handleConnect}
           isValidConnection={handleIsValidConnection}
@@ -431,7 +561,7 @@ function CanvasInner() {
           deleteKeyCode={null}
           minZoom={MIN_ZOOM}
           maxZoom={MAX_ZOOM}
-          defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+          defaultViewport={initialViewport ?? { x: 0, y: 0, zoom: 1 }}
           onlyRenderVisibleElements={nodes.length > VIRTUALIZATION_NODE_THRESHOLD}
           proOptions={{ hideAttribution: true }}
         >
@@ -446,10 +576,10 @@ function CanvasInner() {
   );
 }
 
-export function Canvas() {
+export function Canvas({ initialGraph, initialViewport }: CanvasProps = {}) {
   return (
     <ReactFlowProvider>
-      <CanvasInner />
+      <CanvasInner initialGraph={initialGraph} initialViewport={initialViewport} />
     </ReactFlowProvider>
   );
 }

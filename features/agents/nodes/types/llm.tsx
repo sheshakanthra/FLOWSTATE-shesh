@@ -1,12 +1,16 @@
 import { Sparkles } from "lucide-react";
 import { z } from "zod";
+import { DEFAULT_GROQ_MODEL, GROQ_MODEL_IDS, getModelLabel } from "@/lib/llm/models";
 import type { NodeTypeDefinition } from "../registry";
 
-// No model literal here or anywhere in this file, per CLAUDE.md's LLM
-// provider rule ("No model name string literals outside lib/llm/models.ts").
-// This session has no execution and no config-editing UI (B3/B4), so model
-// selection is left for whichever session wires this node to lib/llm.
+// The model id is an enum sourced from lib/llm/models.ts's GROQ_MODEL_IDS --
+// no model literal appears here or anywhere else in this file, per CLAUDE.md's
+// LLM provider rule ("No model name string literals outside
+// lib/llm/models.ts"). B3 needs a real, editable field here for its
+// multi-select-shared-property-edit gate item; wiring this to an actual
+// running model call is still later Copilot-track work.
 const configSchema = z.object({
+  model: z.enum(GROQ_MODEL_IDS),
   systemPrompt: z.string(),
   temperature: z.number().min(0).max(2),
 });
@@ -30,6 +34,7 @@ export const llmNodeType: NodeTypeDefinition<LlmConfig> = {
   ],
   outputs: [{ id: "response", label: "response", type: "text" }],
   configSchema,
-  defaultConfig: { systemPrompt: "", temperature: 0.7 },
-  summary: (config) => (config.systemPrompt ? `"${config.systemPrompt}"` : `Temperature ${config.temperature}`),
+  defaultConfig: { model: DEFAULT_GROQ_MODEL, systemPrompt: "", temperature: 0.7 },
+  summary: (config) =>
+    config.systemPrompt ? `${getModelLabel(config.model)} — "${config.systemPrompt}"` : getModelLabel(config.model),
 };

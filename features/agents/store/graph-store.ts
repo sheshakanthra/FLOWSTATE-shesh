@@ -29,6 +29,27 @@ interface GraphState {
    *  mutation this session ships a UI affordance for (the node context
    *  menu's "Disable/Enable node"), since config editing itself is B3's job. */
   toggleNodeDisabled: (nodeId: string) => void;
+
+  /**
+   * B3's node-editing surface. Every action below is a plain mutator with no
+   * undo baked in -- callers (canvas/index.tsx, context-menu.tsx,
+   * library/index.tsx, the Inspector) register the inverse themselves via
+   * features/agents/lib/graph-undo.ts, since only the caller knows whether a
+   * given change is a single-shot op (one registerGraphUndo call) or part of
+   * a keystroke/drag burst that needs coalescing into one undo step.
+   */
+  setNodePosition: (nodeId: string, position: { x: number; y: number }) => void;
+  setNodeLabel: (nodeId: string, label: string) => void;
+  setNodeConfigValues: (entries: { nodeId: string; key: string; value: unknown }[]) => void;
+  /** Removes the given nodes and every edge touching any of them, returning
+   *  exactly what was removed so the caller can build an undo entry that
+   *  restores both together via `restoreFragment`. */
+  removeNodesWithEdges: (nodeIds: string[]) => { removedNodes: CanvasNode[]; removedEdges: CanvasEdge[] };
+  removeEdgesByIds: (edgeIds: string[]) => CanvasEdge[];
+  /** Re-inserts a previously-removed nodes/edges fragment verbatim (same
+   *  ids/positions/data) -- the undo half of removeNodesWithEdges /
+   *  removeEdgesByIds, and the redo half of add/paste/duplicate. */
+  restoreFragment: (nodes: CanvasNode[], edges: CanvasEdge[]) => void;
 }
 
 /**
@@ -41,7 +62,7 @@ interface GraphState {
  * matter of selector discipline.
  */
 export const useGraphStore = create<GraphState>()(
-  immer((set) => ({
+  immer((set, get) => ({
     nodes: [],
     edges: [],
 
@@ -112,6 +133,54 @@ export const useGraphStore = create<GraphState>()(
       set((state) => {
         const node = state.nodes.find((candidate) => candidate.id === nodeId);
         if (node) node.data.disabled = !node.data.disabled;
+      }),
+
+    setNodePosition: (nodeId, position) =>
+      set((state) => {
+        const node = state.nodes.find((candidate) => candidate.id === nodeId);
+        if (node) node.position = position;
+      }),
+
+    setNodeLabel: (nodeId, label) =>
+      set((state) => {
+        const node = state.nodes.find((candidate) => candidate.id === nodeId);
+        if (node) node.data.label = label;
+      }),
+
+    setNodeConfigValues: (entries) =>
+      set((state) => {
+        for (const entry of entries) {
+          const node = state.nodes.find((candidate) => candidate.id === entry.nodeId);
+          if (node) node.data.config[entry.key] = entry.value;
+        }
+      }),
+
+    removeNodesWithEdges: (nodeIds) => {
+      const idSet = new Set(nodeIds);
+      const { nodes, edges } = get();
+      const removedNodes = nodes.filter((node) => idSet.has(node.id));
+      const removedEdges = edges.filter((edge) => idSet.has(edge.source) || idSet.has(edge.target));
+      const removedEdgeIds = new Set(removedEdges.map((edge) => edge.id));
+      set((state) => {
+        state.nodes = state.nodes.filter((node) => !idSet.has(node.id));
+        state.edges = state.edges.filter((edge) => !removedEdgeIds.has(edge.id));
+      });
+      return { removedNodes, removedEdges };
+    },
+
+    removeEdgesByIds: (edgeIds) => {
+      const idSet = new Set(edgeIds);
+      const removedEdges = get().edges.filter((edge) => idSet.has(edge.id));
+      set((state) => {
+        state.edges = state.edges.filter((edge) => !idSet.has(edge.id));
+      });
+      return removedEdges;
+    },
+
+    restoreFragment: (nodes, edges) =>
+      set((state) => {
+        state.nodes.push(...nodes);
+        state.edges.push(...edges);
       }),
   })),
 );

@@ -89,6 +89,14 @@ export const agents = pgTable("agents", {
   description: text("description"),
   status: agentStatusEnum("status").notNull().default("draft"),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  // The live-editing autosave target for B3's Agent Builder -- distinct from
+  // agentVersions.graph below, which is an immutable, versioned snapshot
+  // (bumped on publish, not on every debounced save). `viewportJsonb` rides
+  // alongside it so gate item 6 ("reload restores the graph exactly,
+  // including viewport position") has somewhere to live -- @xyflow/react's
+  // Viewport shape ({x,y,zoom}) is small enough not to need its own columns.
+  graphJsonb: jsonb("graph_jsonb"),
+  viewportJsonb: jsonb("viewport_jsonb"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

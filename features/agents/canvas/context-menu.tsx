@@ -15,6 +15,7 @@ import { useCanvasStore } from "../store/canvas-store";
 import { useGraphStore } from "../store/graph-store";
 import { cloneNodes, createNode } from "../nodes/registry";
 import { FIT_VIEW_PADDING } from "../lib/viewport";
+import { registerGraphUndo } from "../lib/graph-undo";
 
 export interface CanvasContextMenuProps {
   children: React.ReactNode;
@@ -63,7 +64,13 @@ export function CanvasContextMenu({ children, contextNodeId }: CanvasContextMenu
 
   const handleAddNode = React.useCallback(() => {
     const position = reactFlow.screenToFlowPosition(lastPointerRef.current);
-    addNode(createNode("trigger", position));
+    const node = createNode("trigger", position);
+    addNode(node);
+    registerGraphUndo(
+      "Added node",
+      () => useGraphStore.getState().removeNodesWithEdges([node.id]),
+      () => useGraphStore.getState().restoreFragment([node], []),
+    );
   }, [reactFlow, addNode]);
 
   const handlePaste = React.useCallback(() => {
@@ -71,7 +78,13 @@ export function CanvasContextMenu({ children, contextNodeId }: CanvasContextMenu
     const anchor = reactFlow.screenToFlowPosition(lastPointerRef.current);
     const pasted = cloneNodes(clipboard, anchor);
     addNodes(pasted);
-    selectExactly(pasted.map((node) => node.id));
+    const ids = pasted.map((node) => node.id);
+    selectExactly(ids);
+    registerGraphUndo(
+      pasted.length === 1 ? "Pasted node" : `Pasted ${pasted.length} nodes`,
+      () => useGraphStore.getState().removeNodesWithEdges(ids),
+      () => useGraphStore.getState().restoreFragment(pasted, []),
+    );
   }, [clipboard, reactFlow, addNodes, selectExactly]);
 
   const handleSelectAll = React.useCallback(() => {
@@ -91,7 +104,13 @@ export function CanvasContextMenu({ children, contextNodeId }: CanvasContextMenu
     const anchor = { x: contextNode.position.x + 24, y: contextNode.position.y + 24 };
     const duplicated = cloneNodes([contextNode], anchor);
     addNodes(duplicated);
-    selectExactly(duplicated.map((node) => node.id));
+    const ids = duplicated.map((node) => node.id);
+    selectExactly(ids);
+    registerGraphUndo(
+      "Duplicated node",
+      () => useGraphStore.getState().removeNodesWithEdges(ids),
+      () => useGraphStore.getState().restoreFragment(duplicated, []),
+    );
   }, [contextNode, addNodes, selectExactly]);
 
   const handleToggleDisabled = React.useCallback(() => {
