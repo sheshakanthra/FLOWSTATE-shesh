@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { agentRuns, runSteps, type runStatusEnum, type runStepKindEnum, type runStepStatusEnum } from "@/db/schema";
 import { withScope } from "./db";
 
@@ -147,4 +147,64 @@ export async function getRun(workspaceId: string, runId: string): Promise<RunRec
       .limit(1),
   );
   return run ?? null;
+}
+
+/**
+ * Full run header -- everything B5's run history table and trace header
+ * need (status/trigger/timing/cost/tokens/error), which `RunRecord` above
+ * deliberately doesn't carry (it predates B5 and was scoped to exactly what
+ * B4's route needed: id/workspaceId/agentId/status/startedAt). `costUsd`
+ * comes back as a plain number, not the numeric column's string
+ * representation -- every caller of this needs to do arithmetic with it
+ * (the cost meter, the table's cost column), not just display it verbatim.
+ */
+export interface RunDetailRecord {
+  id: string;
+  workspaceId: string;
+  agentId: string;
+  status: RunStatus;
+  trigger: string;
+  startedAt: Date;
+  finishedAt: Date | null;
+  durationMs: number | null;
+  costUsd: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  errorMessage: string | null;
+}
+
+function toRunDetail(row: typeof agentRuns.$inferSelect): RunDetailRecord {
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    agentId: row.agentId,
+    status: row.status,
+    trigger: row.trigger,
+    startedAt: row.startedAt,
+    finishedAt: row.finishedAt,
+    durationMs: row.durationMs,
+    costUsd: row.costUsd !== null ? Number(row.costUsd) : null,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    errorMessage: row.errorMessage,
+  };
+}
+
+export async function getRunDetail(workspaceId: string, runId: string): Promise<RunDetailRecord | null> {
+  const [run] = await withScope({ workspaceId }, (tx) =>
+    tx.select().from(agentRuns).where(eq(agentRuns.id, runId)).limit(1),
+  );
+  return run ? toRunDetail(run) : null;
+}
+
+/** Every run for one agent, newest first -- the run history table's data
+ *  source (session spec item 1). No pagination: seeded/demo scale here is
+ *  tens of runs per agent, well within what DataTable's own virtualization
+ *  (A5) already handles without a server-side paging protocol this session
+ *  doesn't otherwise need. */
+export async function listRuns(workspaceId: string, agentId: string): Promise<RunDetailRecord[]> {
+  const rows = await withScope({ workspaceId }, (tx) =>
+    tx.select().from(agentRuns).where(eq(agentRuns.agentId, agentId)).orderBy(desc(agentRuns.startedAt)),
+  );
+  return rows.map(toRunDetail);
 }

@@ -242,15 +242,34 @@ async function main() {
     outputTokensRange: [number, number];
     costRange: [number, number];
     errorMessage?: string;
-    steps: { name: string; kind: "llm_call" | "tool_call" | "condition" | "transform" }[];
+    steps: {
+      name: string;
+      kind: "trigger" | "llm_call" | "tool_call" | "condition" | "transform" | "knowledge" | "output";
+      /** Ties this fixture step to a real graph node id. Only "recall" needs
+       *  this -- it's the one agent with a real `graph_jsonb` (B4), so B5's
+       *  trace replay needs its seeded run_steps' `nodeId`s to actually
+       *  match nodes on that graph, or clicking into any of Recall
+       *  Scheduler's 14 seeded runs would replay against a graph where no
+       *  step ever lights up a single node. The other three agents have no
+       *  graph to replay against at all (see the B3/B4 decisions on why
+       *  their `graph_jsonb` stays empty), so their synthetic per-index ids
+       *  are left as-is -- it genuinely doesn't matter what they are. */
+      nodeId?: string;
+    }[];
     failStepIndex?: number;
   }
 
+  // Matches buildRecallSchedulerGraph()'s six real node ids and kinds
+  // exactly, in the same order edges connect them -- see the doc comment on
+  // RunPlan["steps"]["nodeId"] above for why this agent's fixture data has
+  // to line up with its real graph, unlike the other three.
   const recallSteps: RunPlan["steps"] = [
-    { name: "Find overdue patients", kind: "tool_call" },
-    { name: "Draft reminder message", kind: "llm_call" },
-    { name: "Send SMS", kind: "tool_call" },
-    { name: "Book next slot", kind: "tool_call" },
+    { nodeId: "seed-recall-trigger", name: "Nightly schedule", kind: "trigger" },
+    { nodeId: "seed-recall-transform", name: "Prep query", kind: "transform" },
+    { nodeId: "seed-recall-knowledge", name: "Overdue patients", kind: "knowledge" },
+    { nodeId: "seed-recall-llm", name: "Draft reminder", kind: "llm_call" },
+    { nodeId: "seed-recall-condition", name: "Draft looks good?", kind: "condition" },
+    { nodeId: "seed-recall-output", name: "Send SMS", kind: "output" },
   ];
   const reviewSteps: RunPlan["steps"] = [
     { name: "Fetch new review", kind: "tool_call" },
@@ -296,7 +315,9 @@ async function main() {
       costRange: [0.0009, 0.0041],
       errorMessage: isBlip ? pick(smsErrors) : undefined,
       steps: recallSteps,
-      failStepIndex: isBlip ? 2 : undefined,
+      // Index 5 is "Send SMS" (the output node) -- matches the SMS-specific
+      // error message this blip picks from smsErrors.
+      failStepIndex: isBlip ? 5 : undefined,
     });
   }
 
@@ -404,14 +425,28 @@ async function main() {
       cursor += stepDuration;
       const stepFinished = skipped ? null : new Date(cursor);
 
+      // Only an llm_call step ever costs anything for real (only
+      // llmExecutor -- features/agents/engine/node-executors/llm.ts --
+      // returns costCents/token counts; every other executor doesn't), so
+      // that's the one step in each plan that gets the run's own recorded
+      // cost/tokens attributed to it. This is what lets B5's cost meter
+      // demo actually show the total arriving mid-replay (when the llm_call
+      // step finishes) rather than only jumping from $0 to the full amount
+      // in the last instant of the run.
+      const isLlmCall = step.kind === "llm_call";
+      const stepCostCents =
+        isLlmCall && !skipped && !failsHere && run.costUsd !== null ? Number(run.costUsd) * 100 : null;
+
       stepRows.push({
         workspaceId: workspace.id,
         runId: run.id,
-        // These fixture runs aren't tied to any real graph (see the B4
-        // decision below on why `agents.graph_jsonb` stayed empty for three
-        // of the four seeded agents) -- a deterministic, clearly-synthetic
-        // id per agent/step position, not a real "node-<uuid>".
-        nodeId: `seed-${plan.agentKey}-${stepIndex}`,
+        // These fixture runs aren't tied to any real graph for three of the
+        // four seeded agents (see the B3/B4 decisions on why their
+        // `graph_jsonb` stayed empty) -- a deterministic, clearly-synthetic
+        // id per agent/step position for those. Recall Scheduler's steps
+        // carry their own real graph node id instead (see the doc comment
+        // on RunPlan["steps"]["nodeId"] above).
+        nodeId: step.nodeId ?? `seed-${plan.agentKey}-${stepIndex}`,
         stepIndex,
         name: step.name,
         kind: step.kind,
@@ -421,6 +456,10 @@ async function main() {
         durationMs: skipped ? null : stepDuration,
         input: { step: step.name },
         output: failsHere || skipped ? null : { ok: true },
+        model: isLlmCall && !skipped && !failsHere ? DEFAULT_GROQ_MODEL : null,
+        inputTokens: isLlmCall && !skipped && !failsHere ? run.inputTokens : null,
+        outputTokens: isLlmCall && !skipped && !failsHere ? run.outputTokens : null,
+        costCents: stepCostCents !== null ? stepCostCents.toFixed(6) : null,
         errorMessage: failsHere ? (run.errorMessage ?? "Step failed.") : null,
       });
     });
