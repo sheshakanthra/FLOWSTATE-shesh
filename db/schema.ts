@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
 import {
   boolean,
+  index,
   integer,
   jsonb,
   numeric,
@@ -99,6 +100,15 @@ export const agents = pgTable("agents", {
   name: text("name").notNull(),
   description: text("description"),
   status: agentStatusEnum("status").notNull().default("draft"),
+  // Independent of `status`: a published agent can be temporarily paused
+  // (B6 gate item 8's "bulk enable/disable") without touching its
+  // draft/published/failing/archived lifecycle -- pausing isn't the same
+  // action as archiving (which reads as "put away, probably for good"), and
+  // there's no real trigger infrastructure in this codebase for either flag
+  // to actually gate (schedule/webhook triggers are seed-fixture labels, not
+  // real cron/webhook receivers) -- this is a real, honestly-modeled column,
+  // not a UI-only toggle with nothing behind it.
+  enabled: boolean("enabled").notNull().default(true),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
   // The live-editing autosave target for B3's Agent Builder -- distinct from
   // agentVersions.graph below, which is an immutable, versioned snapshot
@@ -112,42 +122,65 @@ export const agents = pgTable("agents", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const agentVersions = pgTable("agent_versions", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  workspaceId: uuid("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-  agentId: uuid("agent_id")
-    .notNull()
-    .references(() => agents.id, { onDelete: "cascade" }),
-  version: integer("version").notNull(),
-  graph: jsonb("graph").notNull(),
-  published: boolean("published").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const agentVersions = pgTable(
+  "agent_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    graph: jsonb("graph").notNull(),
+    published: boolean("published").notNull().default(false),
+    // B6: who published this snapshot and why -- the version history panel's
+    // own gate item ("author, date, note, run count"). `set null` (not
+    // `cascade`) so a version survives its author's account being removed;
+    // the snapshot itself is the historical record, not the user row.
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [unique("agent_versions_agent_version_unique").on(table.agentId, table.version)],
+);
 
-export const agentRuns = pgTable("agent_runs", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  workspaceId: uuid("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-  agentId: uuid("agent_id")
-    .notNull()
-    .references(() => agents.id, { onDelete: "cascade" }),
-  agentVersionId: uuid("agent_version_id").references(() => agentVersions.id, {
-    onDelete: "set null",
-  }),
-  status: runStatusEnum("status").notNull(),
-  trigger: text("trigger").notNull(),
-  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
-  finishedAt: timestamp("finished_at", { withTimezone: true }),
-  durationMs: integer("duration_ms"),
-  costUsd: numeric("cost_usd", { precision: 10, scale: 4 }),
-  inputTokens: integer("input_tokens"),
-  outputTokens: integer("output_tokens"),
-  errorMessage: text("error_message"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const agentRuns = pgTable(
+  "agent_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    agentVersionId: uuid("agent_version_id").references(() => agentVersions.id, {
+      onDelete: "set null",
+    }),
+    status: runStatusEnum("status").notNull(),
+    trigger: text("trigger").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    durationMs: integer("duration_ms"),
+    costUsd: numeric("cost_usd", { precision: 10, scale: 4 }),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  // B6 gate item 8 ("stays responsive with 500 agents"): the agents index
+  // page's per-agent last-run/success-rate/7-day-cost aggregates are each a
+  // `WHERE agent_id = ... ORDER BY started_at DESC` correlated subquery
+  // (lib/repos/agents.ts's `listAgentsForIndex`) -- Postgres does not
+  // automatically index a foreign-key column, so without this, each of
+  // those subqueries would be a full sequential scan of `agent_runs` per
+  // agent row, exactly the kind of cost that stops being "responsive" once
+  // there are hundreds of agents' worth of run history to scan through per
+  // row rather than an index range lookup.
+  (table) => [index("agent_runs_agent_id_started_at_idx").on(table.agentId, table.startedAt)],
+);
 
 export const runSteps = pgTable("run_steps", {
   id: uuid("id").primaryKey().defaultRandom(),

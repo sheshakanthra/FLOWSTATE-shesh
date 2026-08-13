@@ -58,7 +58,16 @@ function timeDaysAgo(daysAgo: number): Date {
  * llm.context(document), llm.response(text) -> condition.in(any) ->
  * condition.true(signal) -> output.in(any).
  */
-function buildRecallSchedulerGraph() {
+/** B6: takes the LLM node's system prompt as a parameter so the seeded
+ *  version history (below) can hold two real, genuinely different
+ *  snapshots of this same graph -- the current one this function already
+ *  produced for B4/B5 (unchanged, same default parameter value), and an
+ *  earlier one with a plainer prompt, giving the version diff/restore
+ *  features (B6 items 3-4) something real to show instead of two
+ *  identical graphs. */
+function buildRecallSchedulerGraph(
+  systemPrompt = "Draft a warm, brief SMS reminding a dental patient it's time to book their recall cleaning. Keep it under 300 characters, friendly, and end with a call to action.",
+) {
   const nodes = [
     {
       id: "seed-recall-trigger",
@@ -86,8 +95,7 @@ function buildRecallSchedulerGraph() {
         label: "Draft reminder",
         config: {
           model: DEFAULT_GROQ_MODEL,
-          systemPrompt:
-            "Draft a warm, brief SMS reminding a dental patient it's time to book their recall cleaning. Keep it under 300 characters, friendly, and end with a call to action.",
+          systemPrompt,
           temperature: 0.7,
         },
       },
@@ -215,21 +223,61 @@ async function main() {
       .where(eq(agents.id, agentByKey.recall!.id)),
   );
 
+  // Every agent gets a single placeholder version-1 row except Recall
+  // Scheduler, which gets two real, different snapshots (B6's version
+  // history/diff/restore features need real content to show, not two
+  // empty graphs) -- version 1 predates the warmer rewrite version 2
+  // shipped, giving the diff view a genuine "modified" LLM node to
+  // display rather than an empty "no differences" result.
+  const placeholderVersions = agentDefs
+    .filter((def) => def.key !== "recall")
+    .map((def) => ({
+      workspaceId: workspace.id,
+      agentId: agentByKey[def.key]!.id,
+      version: 1,
+      graph: { nodes: [], edges: [] },
+      published: def.status !== "draft",
+      createdBy: def.createdBy,
+      note: null,
+    }));
+
+  const recallGraphV1 = buildRecallSchedulerGraph(
+    "Remind the patient it's time for their dental cleaning. Keep it short.",
+  );
+
   const insertedVersions = await withScope({ workspaceId: workspace.id }, (tx) =>
     tx
       .insert(agentVersions)
-      .values(
-        agentDefs.map((def) => ({
+      .values([
+        {
           workspaceId: workspace.id,
-          agentId: agentByKey[def.key]!.id,
+          agentId: agentByKey.recall!.id,
           version: 1,
-          graph: { nodes: [], edges: [] },
-          published: def.status !== "draft",
-        })),
-      )
+          graph: recallGraphV1,
+          published: true,
+          createdBy: priya.id,
+          note: "Initial launch — nightly recall reminders.",
+        },
+        {
+          workspaceId: workspace.id,
+          agentId: agentByKey.recall!.id,
+          version: 2,
+          graph: recallGraph,
+          published: true,
+          createdBy: priya.id,
+          note: "Warmer tone, added a clear call to action.",
+        },
+        ...placeholderVersions,
+      ])
       .returning(),
   );
-  const versionByKey = Object.fromEntries(agentDefs.map((def, i) => [def.key, insertedVersions[i]!]));
+  const versionByKey = Object.fromEntries(
+    // The last inserted row per agent -- Recall Scheduler's two rows above
+    // are in v1-then-v2 order, so this naturally lands on v2 (the one
+    // matching agents.graph_jsonb, the current live draft) for it, and the
+    // one placeholder row for every other agent.
+    agentDefs.map((def) => [def.key, insertedVersions.filter((version) => version.agentId === agentByKey[def.key]!.id).at(-1)!]),
+  );
 
   // ---- runs + steps ----
   interface RunPlan {

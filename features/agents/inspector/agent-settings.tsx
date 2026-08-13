@@ -1,11 +1,15 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { History } from "lucide-react";
 import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import type { AgentDetailRecord } from "@/lib/repos/agents";
+import { PublishDialog } from "../versions/publish-dialog";
 
 export interface AgentSettingsProps {
   agent: Pick<AgentDetailRecord, "name" | "description" | "status">;
@@ -31,6 +35,7 @@ const STATUS_VARIANT: Record<AgentDetailRecord["status"], BadgeVariant> = {
  * than pulling agent-settings edits into the graph's coalesced-undo system.
  */
 export function AgentSettings({ agent, workspaceSlug, agentId }: AgentSettingsProps) {
+  const router = useRouter();
   const [name, setName] = React.useState(agent.name);
   const [description, setDescription] = React.useState(agent.description ?? "");
   const [saving, setSaving] = React.useState(false);
@@ -61,6 +66,22 @@ export function AgentSettings({ agent, workspaceSlug, agentId }: AgentSettingsPr
           <Badge variant={STATUS_VARIANT[agent.status]}>{agent.status}</Badge>
         </div>
         <p className="text-body text-fg-100">No node selected — select a node on the canvas to edit its properties.</p>
+      </section>
+
+      <section className="flex items-center gap-2">
+        <PublishDialog
+          agentId={agentId}
+          workspaceSlug={workspaceSlug}
+          isFirstPublish={agent.status === "draft"}
+          onPublished={() => router.refresh()}
+        />
+        <Link
+          href={`/w/${workspaceSlug}/agents/${agentId}/versions`}
+          className="flex items-center gap-1.5 text-meta text-fg-100 hover:text-fg-000 hover:underline"
+        >
+          <History className="size-3.5" aria-hidden="true" />
+          Version history
+        </Link>
       </section>
 
       <section className="flex flex-col gap-3">

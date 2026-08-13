@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { requireRole } from "@/lib/auth/guard";
-import { updateAgent } from "@/lib/repos/agents";
+import { getAgentDetail, updateAgent } from "@/lib/repos/agents";
 
 const graphSchema = z.object({
   nodes: z.array(z.unknown()),
@@ -32,6 +32,27 @@ const patchSchema = z
     (body) => body.name !== undefined || body.description !== undefined || body.graph !== undefined || body.viewport !== undefined,
     { message: "Nothing to update." },
   );
+
+/** Backs the agents index table's "Export" row action (session spec item 7)
+ *  -- that page doesn't already have the agent's graph loaded client-side
+ *  the way the builder page does, so exporting from there needs a real
+ *  fetch. `workspaceSlug` rides as a query parameter (GET has no body),
+ *  matching B5's trace route precedent for the same reason. */
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id: agentId } = await params;
+  const workspaceSlug = new URL(request.url).searchParams.get("workspaceSlug");
+  if (!workspaceSlug) {
+    return Response.json({ error: "workspaceSlug query parameter is required." }, { status: 400 });
+  }
+
+  const context = await requireRole(request, workspaceSlug, "member");
+  if (context instanceof Response) return context;
+
+  const agent = await getAgentDetail(context.workspace.id, agentId);
+  if (!agent) return Response.json({ error: "Agent not found." }, { status: 404 });
+
+  return Response.json({ agent });
+}
 
 /**
  * Any workspace member may save their own edits to an agent's graph or

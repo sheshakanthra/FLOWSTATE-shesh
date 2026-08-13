@@ -14,11 +14,28 @@ export interface RunRecord {
   startedAt: Date;
 }
 
-export async function createRun(workspaceId: string, agentId: string, trigger: string): Promise<RunRecord> {
+/**
+ * `agentVersionId` (B6): omitted, this is a test-console run of the live
+ * draft, exactly B4's original behavior -- unchanged for every existing
+ * caller. Set, this run is pinned to one immutable `agent_versions`
+ * snapshot (the run route resolves that snapshot's graph *before* calling
+ * this), which is what gate item 2's "draft isolation" actually rests on
+ * for a run against a published version specifically: the run's own record
+ * of which graph it used is the immutable version id, not "whatever
+ * agents.graph_jsonb happened to contain," so a draft edit made after the
+ * run started (or even after it finished) can never retroactively change
+ * what this row says ran.
+ */
+export async function createRun(
+  workspaceId: string,
+  agentId: string,
+  trigger: string,
+  agentVersionId?: string,
+): Promise<RunRecord> {
   const [run] = await withScope({ workspaceId }, (tx) =>
     tx
       .insert(agentRuns)
-      .values({ workspaceId, agentId, status: "running", trigger, startedAt: new Date() })
+      .values({ workspaceId, agentId, agentVersionId, status: "running", trigger, startedAt: new Date() })
       .returning({ id: agentRuns.id, workspaceId: agentRuns.workspaceId, agentId: agentRuns.agentId, status: agentRuns.status, startedAt: agentRuns.startedAt }),
   );
   if (!run) throw new Error("run insert failed");

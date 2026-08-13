@@ -99,7 +99,16 @@ function NodeShellComponent({ id, data, selected, isConnectable, definition }: N
       data-run-status={runStatus}
       aria-disabled={isDisabled || undefined}
       className={cn(
-        "relative flex min-w-44 flex-col rounded-lg border bg-ink-100 shadow-card",
+        // Fixed, not `min-w-44` (no upper bound) -- Tailwind's `truncate` on
+        // the summary line below does nothing without a bounded parent
+        // width to truncate against, so a long summary (a verbose LLM
+        // system prompt, e.g.) silently grew the whole card instead of
+        // eliding its own text, overlapping neighboring nodes at this
+        // canvas's normal column spacing. Same real bug, same fix B5's
+        // read-only replay node hit and fixed in its own file -- this
+        // session's own template graphs are exactly the case that surfaces
+        // it in the live builder too (see PROGRESS.md's B6 decisions).
+        "relative flex w-44 flex-col rounded-lg border bg-ink-100 shadow-card",
         selected
           ? "border-blue-fg"
           : runStatus === "failed"

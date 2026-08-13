@@ -2,12 +2,23 @@ import { z } from "zod";
 import { requireRole } from "@/lib/auth/guard";
 import { getAgentDetail } from "@/lib/repos/agents";
 import { createRun, finishRun, recordStep, type StepEntry } from "@/lib/repos/runs";
+import { getVersion } from "@/lib/repos/agent-versions";
 import { runGraph, type EngineNode } from "@/features/agents/engine/executor";
 import type { EngineGraphEdge } from "@/features/agents/engine/scope-resolver";
 
 const runRequestSchema = z.object({
   workspaceSlug: z.string().min(1),
   runInput: z.unknown().optional(),
+  // B6 gate item 2 ("draft isolation"): omitted, this runs the live draft,
+  // identical to B4's original behavior -- every existing caller (the test
+  // console) never sends this field. Set to a real `agent_versions` id,
+  // this runs that immutable snapshot instead, which is what this
+  // session's own draft-isolation test/e2e exercise directly: start a run
+  // pinned to a published version, edit the draft while it's mid-run, and
+  // confirm the run's recorded steps reflect the version's original graph,
+  // not the edit. Not exposed in the builder UI this session -- the spec's
+  // own version-panel actions (item 3) are View/Diff/Restore, not Run.
+  agentVersionId: z.string().optional(),
 });
 
 /** One NDJSON line per event -- newline-delimited JSON, not SSE: the
@@ -64,17 +75,27 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const context = await requireRole(request, parsed.data.workspaceSlug, "member");
   if (context instanceof Response) return context;
 
-  const agent = await getAgentDetail(context.workspace.id, agentId);
-  if (!agent) {
-    return Response.json({ error: "Agent not found." }, { status: 404 });
+  const workspaceId = context.workspace.id;
+
+  let graph: { nodes: EngineNode[]; edges: EngineGraphEdge[] } | null;
+  if (parsed.data.agentVersionId) {
+    const version = await getVersion(workspaceId, agentId, parsed.data.agentVersionId);
+    if (!version) {
+      return Response.json({ error: "Version not found." }, { status: 404 });
+    }
+    graph = version.graph as unknown as { nodes: EngineNode[]; edges: EngineGraphEdge[] };
+  } else {
+    const agent = await getAgentDetail(workspaceId, agentId);
+    if (!agent) {
+      return Response.json({ error: "Agent not found." }, { status: 404 });
+    }
+    graph = agent.graph as { nodes: EngineNode[]; edges: EngineGraphEdge[] } | null;
   }
-  const graph = agent.graph as { nodes: EngineNode[]; edges: EngineGraphEdge[] } | null;
   if (!graph || graph.nodes.length === 0) {
     return Response.json({ error: "This agent has no graph to run yet." }, { status: 400 });
   }
 
-  const workspaceId = context.workspace.id;
-  const run = await createRun(workspaceId, agentId, "manual");
+  const run = await createRun(workspaceId, agentId, "manual", parsed.data.agentVersionId);
   const runStartedAt = Date.now();
 
   const encoder = new TextEncoder();
