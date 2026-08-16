@@ -1,0 +1,112 @@
+{
+  "/w/meridian-ops/today": {
+    "route": "/w/meridian-ops/today",
+    "entity": {
+      "type": "workspace",
+      "id": "<uuid>"
+    },
+    "selection": null,
+    "filters": {},
+    "dateRange": null,
+    "recentActions": []
+  },
+  "/w/meridian-ops/agents": {
+    "route": "/w/meridian-ops/agents",
+    "entity": {
+      "type": "workspace",
+      "id": "<uuid>"
+    },
+    "selection": null,
+    "filters": {},
+    "dateRange": null,
+    "recentActions": []
+  },
+  "/w/meridian-ops/agents/<uuid>/build": {
+    "route": "/w/meridian-ops/agents/<uuid>/build",
+    "entity": {
+      "type": "agent",
+      "id": "<uuid>"
+    },
+    "selection": null,
+    "filters": {},
+    "dateRange": null,
+    "recentActions": []
+  },
+  "/w/meridian-ops/agents/<uuid>/runs": {
+    "route": "/w/meridian-ops/agents/<uuid>/runs",
+    "entity": {
+      "type": "agent",
+      "id": "<uuid>"
+    },
+    "selection": null,
+    "filters": {},
+    "dateRange": null,
+    "recentActions": []
+  },
+  "/w/meridian-ops/agents/<uuid>/runs/<uuid>": {
+    "route": "/w/meridian-ops/agents/<uuid>/runs/<uuid>",
+    "entity": {
+      "type": "run",
+      "id": "<uuid>"
+    },
+    "selection": null,
+    "filters": {},
+    "dateRange": null,
+    "recentActions": []
+  },
+  "/w/meridian-ops/agents/<uuid>/versions": {
+    "route": "/w/meridian-ops/agents/<uuid>/versions",
+    "entity": {
+      "type": "agent",
+      "id": "<uuid>"
+    },
+    "selection": null,
+    "filters": {},
+    "dateRange": null,
+    "recentActions": []
+  },
+  "/w/meridian-ops/flows": {
+    "route": "/w/meridian-ops/flows",
+    "entity": {
+      "type": "workspace",
+      "id": "<uuid>"
+    },
+    "selection": null,
+    "filters": {},
+    "dateRange": null,
+    "recentActions": []
+  },
+  "/w/meridian-ops/insights": {
+    "route": "/w/meridian-ops/insights",
+    "entity": {
+      "type": "workspace",
+      "id": "<uuid>"
+    },
+    "selection": null,
+    "filters": {},
+    "dateRange": null,
+    "recentActions": []
+  },
+  "/w/meridian-ops/knowledge": {
+    "route": "/w/meridian-ops/knowledge",
+    "entity": {
+      "type": "workspace",
+      "id": "<uuid>"
+    },
+    "selection": null,
+    "filters": {},
+    "dateRange": null,
+    "recentActions": []
+  },
+  "/w/meridian-ops/settings": {
+    "route": "/w/meridian-ops/settings",
+    "entity": {
+      "type": "workspace",
+      "id": "<uuid>"
+    },
+    "selection": null,
+    "filters": {},
+    "dateRange": null,
+    "recentActions": []
+  }
+}

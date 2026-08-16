@@ -86,6 +86,29 @@ export function RunsFilters({ value, onChange }: RunsFiltersProps) {
   );
 }
 
+export function datePresetLabel(preset: DatePreset): string {
+  return DATE_PRESET_LABELS[preset];
+}
+
+/**
+ * The copilot's context envelope (C1) carries `dateRange` as a concrete
+ * `{from, to}` pair, not a preset name — a copilot that has to know what
+ * "7d" means is back to receiving app jargon instead of context. Resolving
+ * the preset here keeps that translation next to the presets themselves.
+ * `all` has no range, which is why this returns null rather than an
+ * artificially wide window.
+ */
+export function datePresetToRange(preset: DatePreset, now: Date = new Date()): { from: string; to: string } | null {
+  if (preset === "all") return null;
+  const to = now.toISOString();
+  if (preset === "today") {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return { from: start.toISOString(), to };
+  }
+  const days = preset === "7d" ? 7 : 30;
+  return { from: new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString(), to };
+}
+
 export function matchesRunsFilter(
   run: { status: RunStatus; startedAt: Date },
   filter: RunsFilterState,

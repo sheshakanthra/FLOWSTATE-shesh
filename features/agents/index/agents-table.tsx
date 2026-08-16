@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
+import { useCopilotContext } from "@/features/copilot/context/use-copilot-context";
 import { exportAgent, serializeAgentExport } from "../lib/export";
 import { formatTimestamp } from "../lib/format";
 import type { AgentStatus } from "@/lib/repos/agents";
@@ -77,6 +78,11 @@ export function AgentsTable({ agents, workspaceSlug }: AgentsTableProps) {
   const [pendingIds, setPendingIds] = React.useState<Set<string>>(new Set());
 
   const selectedIds = Object.keys(rowSelection).filter((id) => rowSelection[id]);
+
+  // C1 item 4: no single entity on an index page, but a multi-row selection
+  // is real context -- "compare these three agents" only means anything if
+  // the copilot knows which three.
+  useCopilotContext({ id: "agents-index", selection: { type: "agent", ids: selectedIds } });
 
   async function setEnabled(agentIds: string[], enabled: boolean) {
     setPendingIds((prev) => new Set([...prev, ...agentIds]));

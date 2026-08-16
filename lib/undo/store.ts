@@ -55,6 +55,18 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
+/**
+ * The same subscription `useUndoStack` uses, exposed for non-React callers.
+ * C1's copilot context registry watches the stack from module scope (not a
+ * component) so observing new undo entries never re-renders the app shell —
+ * matching how it subscribes to everything else it derives context from.
+ */
+export const subscribeToUndoStack = subscribe;
+
+export function getUndoStackSnapshot(): UndoEntry[] {
+  return past;
+}
+
 function getPastSnapshot(): UndoEntry[] {
   return past;
 }

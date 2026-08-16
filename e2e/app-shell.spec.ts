@@ -39,9 +39,11 @@ test("every stub route renders a designed empty state with a next action", async
   test.setTimeout(150_000);
   await login(page);
 
+  // "agents" dropped from this list in C1: B6 rebuilt it into a real
+  // DataTable-backed index (see e2e/agents-index.spec.ts) -- it hasn't been
+  // a stub since, and this test wasn't updated to match until now.
   const routes: [string, string, string][] = [
     ["today", "Nothing needs you yet", "View agents"],
-    ["agents", "No agents open yet", "Back to Today"],
     ["flows", "No automations yet", "Back to Today"],
     ["knowledge", "No knowledge sources yet", "Back to Today"],
     ["insights", "No insights yet", "Back to Today"],

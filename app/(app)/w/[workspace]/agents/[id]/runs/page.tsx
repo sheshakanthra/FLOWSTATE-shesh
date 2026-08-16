@@ -41,7 +41,7 @@ export default async function AgentRunsPage({
         ]}
         description={`Every recorded run of ${agent.name} — open one to scrub its trace.`}
       />
-      <RunsTable runs={runs} agentId={agentId} workspaceSlug={workspaceSlug} />
+      <RunsTable runs={runs} agentId={agentId} agentName={agent.name} workspaceSlug={workspaceSlug} />
     </div>
   );
 }

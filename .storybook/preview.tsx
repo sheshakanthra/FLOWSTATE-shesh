@@ -55,6 +55,15 @@ const preview: Preview = {
       },
     },
     backgrounds: { disable: true },
+    // Every route in this app is App Router (CLAUDE.md's stack table), so
+    // this is a blanket, not per-story, setting. Without it,
+    // @storybook/nextjs never wraps a story in Next's AppRouterContext, and
+    // any component calling `useRouter`/`Link` from `next/navigation`
+    // throws Next's own "invariant expected app router to be mounted"
+    // instead of rendering -- agent-settings.tsx has called `useRouter`
+    // since B6, so every Inspector story has been broken since then. Found
+    // via this session's full e2e regression run, not a hypothetical.
+    nextjs: { appDirectory: true },
     a11y: {
       test: "todo",
       config: {

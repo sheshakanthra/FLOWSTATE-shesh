@@ -44,10 +44,16 @@ export function useGlobalShortcuts(handlers: GlobalShortcutHandlers): void {
     }
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (isTypingTarget(event.target)) return;
-
       const mod = event.metaKey || event.ctrlKey;
 
+      // Modifier chords fire even while a field has focus; only the bare-key
+      // shortcuts below defer to typing. A user mid-sentence in a form who
+      // wants the copilot shouldn't have to click away first — and more
+      // pointedly, ⌘J is what closes the copilot, whose own composer is a
+      // textarea: gating it on `isTypingTarget` made the dock impossible to
+      // toggle shut from inside itself, which C1's gate item 7 ("⌘J
+      // toggles") caught. `?` and the `g`-chords still bail, since those are
+      // real characters someone could be typing.
       if (mod && event.key === "\\") {
         event.preventDefault();
         handlersRef.current.onToggleSidebar();
@@ -58,6 +64,9 @@ export function useGlobalShortcuts(handlers: GlobalShortcutHandlers): void {
         handlersRef.current.onToggleCopilot();
         return;
       }
+
+      if (isTypingTarget(event.target)) return;
+
       if (!mod && event.key === "?") {
         event.preventDefault();
         handlersRef.current.onShowOverlay();

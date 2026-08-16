@@ -20,6 +20,7 @@ import { SplitPane } from "@/components/ui/split-pane";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { useMotion, useReducedMotion } from "@/lib/motion";
+import { useCopilotContext } from "@/features/copilot/context/use-copilot-context";
 import { listNodeTypes, type AgentNode, type AnyNodeTypeDefinition } from "../nodes/registry";
 import { Port } from "../nodes/port";
 import { Shimmer } from "@/components/motion/shimmer";
@@ -267,6 +268,15 @@ function ReplayCanvas({ graph }: { graph: TraceGraph }) {
 export function TraceView({ agentId, agentName, workspaceSlug, graph, run, steps, availableRuns, initialPlayheadMs }: TraceViewProps) {
   const loadTrace = useReplayStore((state) => state.loadTrace);
   const currentSteps = useReplayStore((state) => state.steps);
+
+  // C1 item 4: Track B's run context. Safe to register from this component
+  // body rather than an isolated one (as the builder does) because
+  // `TraceView` subscribes only to `loadTrace` and `steps` -- it doesn't
+  // re-render while the playhead scrubs, so this never runs at 60Hz.
+  useCopilotContext({
+    id: "agent-run-trace",
+    entity: { type: "run", id: run.id, label: `${agentName} · ${formatTimestamp(new Date(run.startedAt))}` },
+  });
 
   React.useEffect(() => {
     const runStartedAt = run.startedAt;

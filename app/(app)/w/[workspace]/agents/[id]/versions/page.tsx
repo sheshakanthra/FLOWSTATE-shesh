@@ -56,6 +56,7 @@ export default async function AgentVersionsPage({
       <div className="min-h-0 flex-1">
         <VersionsPanel
           agentId={agentId}
+          agentName={agent.name}
           workspaceSlug={workspaceSlug}
           currentDraftGraph={currentDraftGraph}
           versions={panelVersions}

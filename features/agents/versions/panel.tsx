@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { toast } from "@/components/ui/toast";
+import { useCopilotContext } from "@/features/copilot/context/use-copilot-context";
 import { formatTimestamp } from "../lib/format";
 import { VersionDiff, VersionView, type DiffableGraph } from "./diff";
 import { restoreVersionAsDraft } from "./restore";
@@ -23,6 +24,7 @@ export interface VersionsPanelVersion {
 
 export interface VersionsPanelProps {
   agentId: string;
+  agentName: string;
   workspaceSlug: string;
   currentDraftGraph: DiffableGraph;
   versions: VersionsPanelVersion[];
@@ -39,10 +41,18 @@ type DetailMode = { kind: "none" } | { kind: "view"; versionId: string } | { kin
  * file list doesn't separately name" precedent as B3's `AgentBuilder` and
  * B5's `RunsTable`).
  */
-export function VersionsPanel({ agentId, workspaceSlug, currentDraftGraph, versions }: VersionsPanelProps) {
+export function VersionsPanel({ agentId, agentName, workspaceSlug, currentDraftGraph, versions }: VersionsPanelProps) {
   const router = useRouter();
   const [detail, setDetail] = React.useState<DetailMode>({ kind: "none" });
   const [restoringId, setRestoringId] = React.useState<string | null>(null);
+
+  // C1 item 4: this screen is still about one agent, so the copilot should
+  // know which -- without it, "what changed between the last two versions"
+  // has no subject.
+  useCopilotContext({
+    id: "agent-versions",
+    entity: { type: "agent", id: agentId, label: agentName },
+  });
 
   const selectedVersion = detail.kind === "none" ? null : versions.find((v) => v.id === detail.versionId);
 

@@ -4,7 +4,8 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { PanelLeft, PanelLeftClose, Keyboard, MessageSquare } from "lucide-react";
 import { Sidebar } from "./sidebar";
-import { CopilotDock } from "./copilot-dock";
+import { CopilotDock } from "@/features/copilot/dock";
+import { CopilotEnvelopeProbe, CopilotProvider } from "@/features/copilot/context/provider";
 import { ShortcutOverlay } from "./shortcut-overlay";
 import { NAV_ITEMS, navHref } from "./nav";
 import type { WorkspaceSummary } from "@/lib/repos/workspaces";
@@ -102,20 +103,27 @@ export function Shell({ currentWorkspace, workspaces, user, children }: ShellPro
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-ink-000">
-      <Sidebar
-        workspaceSlug={currentWorkspace.slug}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={toggleSidebar}
-        workspaceSwitcher={{ current: currentWorkspace, workspaces }}
-        userMenu={user}
-      />
-      <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
-      <CopilotDock open={copilotOpen} onClose={() => setCopilotOpen(false)} />
-      <FiringBar />
-      <CommandPalette />
-      <ShortcutOverlay open={overlayOpen} onOpenChange={setOverlayOpen} />
-      <Toaster />
-    </div>
+    <CopilotProvider workspace={currentWorkspace}>
+      {/* `relative` is what the copilot dock positions against. The dock is
+          an overlay in every mode precisely so that opening it leaves
+          `<main>`'s box untouched — see features/copilot/dock/index.tsx for
+          why that's structural rather than incidental. */}
+      <div className="relative flex h-screen overflow-hidden bg-ink-000">
+        <Sidebar
+          workspaceSlug={currentWorkspace.slug}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={toggleSidebar}
+          workspaceSwitcher={{ current: currentWorkspace, workspaces }}
+          userMenu={user}
+        />
+        <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
+        <CopilotDock open={copilotOpen} onClose={() => setCopilotOpen(false)} />
+        <CopilotEnvelopeProbe />
+        <FiringBar />
+        <CommandPalette />
+        <ShortcutOverlay open={overlayOpen} onOpenChange={setOverlayOpen} />
+        <Toaster />
+      </div>
+    </CopilotProvider>
   );
 }
