@@ -1,5 +1,5 @@
-import { desc, eq } from "drizzle-orm";
-import { agentRuns, runSteps, type runStatusEnum, type runStepKindEnum, type runStepStatusEnum } from "@/db/schema";
+import { and, desc, eq, gte } from "drizzle-orm";
+import { agentRuns, agents, runSteps, type runStatusEnum, type runStepKindEnum, type runStepStatusEnum } from "@/db/schema";
 import { withScope } from "./db";
 
 export type RunStatus = (typeof runStatusEnum.enumValues)[number];
@@ -224,4 +224,57 @@ export async function listRuns(workspaceId: string, agentId: string): Promise<Ru
     tx.select().from(agentRuns).where(eq(agentRuns.agentId, agentId)).orderBy(desc(agentRuns.startedAt)),
   );
   return rows.map(toRunDetail);
+}
+
+export interface WorkspaceRunRow {
+  id: string;
+  agentId: string;
+  agentName: string;
+  status: RunStatus;
+  trigger: string;
+  startedAt: Date;
+  finishedAt: Date | null;
+  durationMs: number | null;
+  costUsd: number | null;
+  errorMessage: string | null;
+}
+
+/**
+ * C2's retrieval source for questions that span every agent ("which agents
+ * failed most this week") -- every other run query in this file is scoped
+ * to one already-known `agentId`, which the copilot's own question usually
+ * isn't. Joined to `agents` for the name a citation label needs (a run id
+ * alone means nothing to a person reading the copilot's answer).
+ */
+export async function listRunsForWorkspace(
+  workspaceId: string,
+  options: { since?: Date; status?: RunStatus; limit?: number } = {},
+): Promise<WorkspaceRunRow[]> {
+  const { since, status, limit = 20 } = options;
+  const conditions = [eq(agentRuns.workspaceId, workspaceId)];
+  if (since) conditions.push(gte(agentRuns.startedAt, since));
+  if (status) conditions.push(eq(agentRuns.status, status));
+
+  const rows = await withScope({ workspaceId }, (tx) =>
+    tx
+      .select({
+        id: agentRuns.id,
+        agentId: agentRuns.agentId,
+        agentName: agents.name,
+        status: agentRuns.status,
+        trigger: agentRuns.trigger,
+        startedAt: agentRuns.startedAt,
+        finishedAt: agentRuns.finishedAt,
+        durationMs: agentRuns.durationMs,
+        costUsd: agentRuns.costUsd,
+        errorMessage: agentRuns.errorMessage,
+      })
+      .from(agentRuns)
+      .innerJoin(agents, eq(agents.id, agentRuns.agentId))
+      .where(and(...conditions))
+      .orderBy(desc(agentRuns.startedAt))
+      .limit(limit),
+  );
+
+  return rows.map((row) => ({ ...row, costUsd: row.costUsd !== null ? Number(row.costUsd) : null }));
 }

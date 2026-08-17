@@ -15,7 +15,44 @@
  * arrives, since either has the same `prompt_tokens`/`completion_tokens`.
  */
 
+import { LLMContextTooLargeError, LLMProviderUnavailableError, LLMRateLimitError } from "./errors";
+
 const GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions";
+
+/**
+ * Maps a failed Groq response to one of `lib/llm/errors.ts`'s three typed
+ * errors (session spec item 8) -- a plain `Error` for anything else, so a
+ * genuinely unexpected failure still surfaces instead of being coerced into
+ * one of the three named cases. Groq's error body is OpenAI-compatible
+ * (`{ error: { message, type, code } }`); `code` is read first since it's
+ * the more precise signal, `type`/`message` as a fallback for the cases
+ * where Groq only sets one of the two.
+ */
+async function toGroqError(response: Response): Promise<Error> {
+  const text = await response.text().catch(() => "");
+  let code = "";
+  let type = "";
+  let message = "";
+  try {
+    const parsed = JSON.parse(text) as { error?: { message?: string; type?: string; code?: string } };
+    code = parsed.error?.code ?? "";
+    type = parsed.error?.type ?? "";
+    message = parsed.error?.message ?? "";
+  } catch {
+    // Not JSON (a proxy/edge error page, most likely) -- status code alone still decides below.
+  }
+
+  if (response.status === 429 || code === "rate_limit_exceeded") {
+    return new LLMRateLimitError(message || undefined);
+  }
+  if (code === "context_length_exceeded" || /context length|maximum context/i.test(message)) {
+    return new LLMContextTooLargeError(message || undefined);
+  }
+  if (response.status >= 500 || response.status === 503) {
+    return new LLMProviderUnavailableError(message || undefined);
+  }
+  return new Error(message || `Groq request failed (${response.status}): ${text.slice(0, 500)}` || type);
+}
 
 export interface GroqMessage {
   role: "system" | "user" | "assistant";
@@ -56,25 +93,37 @@ function getApiKey(): string {
  * `completeGroqChat` below, which does exactly that.
  */
 export async function* streamGroqChat(params: GroqChatParams): AsyncGenerator<GroqStreamChunk> {
-  const response = await fetch(GROQ_CHAT_COMPLETIONS_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${getApiKey()}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: params.model,
-      messages: params.messages,
-      temperature: params.temperature,
-      stream: true,
-      stream_options: { include_usage: true },
-    }),
-    signal: params.signal,
-  });
+  let response: Response;
+  try {
+    response = await fetch(GROQ_CHAT_COMPLETIONS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${getApiKey()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: params.model,
+        messages: params.messages,
+        temperature: params.temperature,
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+      signal: params.signal,
+    });
+  } catch (error) {
+    // A client-initiated abort (Stop generation) surfaces here as a
+    // DOMException named "AbortError" -- re-thrown as-is so callers can tell
+    // it apart from a real network failure, rather than being coerced into
+    // "provider down." Checked by `.name` alone, not `instanceof Error`:
+    // Node/browsers make DOMException an Error subclass, but not every
+    // environment's DOMException does (jsdom's, notably, does not), and an
+    // abort should be recognized as an abort everywhere this code runs.
+    if (error && typeof error === "object" && "name" in error && error.name === "AbortError") throw error;
+    throw new LLMProviderUnavailableError();
+  }
 
   if (!response.ok || !response.body) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Groq request failed (${response.status}): ${text.slice(0, 500)}`);
+    throw await toGroqError(response);
   }
 
   const reader = response.body.getReader();

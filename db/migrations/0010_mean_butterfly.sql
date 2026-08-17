@@ -1,0 +1,1 @@
+ALTER TABLE "copilot_threads" ADD COLUMN "cancel_requested_id" text;

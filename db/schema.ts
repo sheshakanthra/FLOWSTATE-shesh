@@ -235,6 +235,19 @@ export const copilotThreads = pgTable("copilot_threads", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   title: text("title"),
+  // Gate item 5's cancellation signal -- set by POST
+  // /api/copilot/stream/cancel, polled (throttled) by the in-flight
+  // streaming request for this thread. Not an in-memory flag: verified
+  // directly against this app's real dev server that Next.js Route
+  // Handlers for two different route files do not reliably share
+  // module-level state (each appears to get its own bundle/module
+  // instance, even within one `next dev` process), so a plain
+  // `Map<requestId, AbortController>` shared via import silently never saw
+  // the cancel request's write. A column both routes reach through the same
+  // real Postgres connection sidesteps that entirely. Cleared back to null
+  // once the stream this id belongs to actually stops, so it can never be
+  // mistaken for a future stream's own cancellation.
+  cancelRequestedId: text("cancel_requested_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -249,6 +262,16 @@ export const copilotMessages = pgTable("copilot_messages", {
     .references(() => copilotThreads.id, { onDelete: "cascade" }),
   role: copilotRoleEnum("role").notNull(),
   content: text("content").notNull(),
+  // C2: null on every user/system message, and on any assistant message that
+  // answered without retrieving workspace data at all -- both read as "no
+  // retrieval happened, nothing to check for an unsourced claim." An
+  // assistant message that *did* trigger retrieve.ts always gets a real
+  // array here, even an empty one (retrieval ran but nothing matched), which
+  // is what tells the renderer to run its unsourced-claim marking over that
+  // message's sentences. The array itself holds only citations the server
+  // resolved against the retrieved set -- ids the model invented are dropped
+  // before this is ever written (see features/copilot/lib/retrieve.ts).
+  citations: jsonb("citations"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

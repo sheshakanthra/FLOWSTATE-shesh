@@ -2,15 +2,17 @@
 
 import * as React from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Sparkles, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ArrowLeft, Sparkles, X } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
 import { base, instant, useReducedMotion } from "@/lib/motion";
 import { cn, focusRing } from "@/lib/utils";
+import { Composer } from "../composer";
 import { ContextChips } from "../context/chips";
 import { useCopilotSnapshot, useCopilotWorkspace } from "../context/provider";
+import { MessageList } from "../messages/list";
+import { useMessagesStore, useThreadMessages } from "../messages/store";
 import { ThreadList } from "../threads/list";
+import { threadTitle, useThreadsStore } from "../threads/store";
 import { suggestedPrompts } from "../suggestions";
 import { DOCK_MODES, persistMode, readStoredMode, type DockMode } from "./modes";
 import { useDockResize } from "./resize";
@@ -50,6 +52,34 @@ export function CopilotDock({ open, onClose }: CopilotDockProps) {
   const composerRef = React.useRef<HTMLTextAreaElement>(null);
   const returnFocusRef = React.useRef<HTMLElement | null>(null);
   const [draft, setDraft] = React.useState("");
+
+  const activeThreadId = useThreadsStore((state) => state.activeThreadId);
+  const setActiveThread = useThreadsStore((state) => state.setActiveThread);
+  const threads = useThreadsStore((state) => state.threads);
+  const threadMessagesState = useThreadMessages(activeThreadId);
+  const editAndResend = useMessagesStore((state) => state.editAndResend);
+  const regenerate = useMessagesStore((state) => state.regenerate);
+
+  // Session spec item 9: threads survive reload -- messages are fetched the
+  // first time a thread is opened in this session, not held anywhere
+  // between page loads.
+  React.useEffect(() => {
+    if (activeThreadId && threadMessagesState.status === "idle") {
+      void useMessagesStore.getState().load(workspace.slug, activeThreadId);
+    }
+  }, [activeThreadId, threadMessagesState.status, workspace.slug]);
+
+  const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? null;
+
+  function handleEdit(messageId: string, content: string) {
+    if (!activeThreadId) return;
+    void editAndResend({ workspaceSlug: workspace.slug, threadId: activeThreadId, envelope, messageId, content });
+  }
+
+  function handleRegenerate(messageId: string) {
+    if (!activeThreadId) return;
+    void regenerate({ workspaceSlug: workspace.slug, threadId: activeThreadId, envelope, messageId });
+  }
 
   // Persisted mode is read after mount, never during render: the dock starts
   // closed, so resolving it a tick late is invisible, and reading storage
@@ -172,22 +202,58 @@ export function CopilotDock({ open, onClose }: CopilotDockProps) {
             </button>
           </header>
 
-          <div
-            className={cn(
-              "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3",
-              // Fullscreen is the one mode with room to breathe; the column
-              // stays readable instead of stretching a 14px body across a
-              // 2560px display.
-              mode === "fullscreen" && "mx-auto w-full max-w-3xl",
-            )}
-          >
-            <ThreadList workspaceSlug={workspace.slug} />
-            <Separator />
-            <EmptyConversation prompts={prompts} onPick={(prompt) => {
-              setDraft(prompt);
-              composerRef.current?.focus();
-            }} />
-          </div>
+          {activeThreadId ? (
+            <div
+              data-thread-id={activeThreadId}
+              className={cn("flex min-h-0 flex-1 flex-col gap-1.5 p-2", mode === "fullscreen" && "mx-auto w-full max-w-3xl")}
+            >
+              <div className="flex items-center gap-1.5 px-1 pb-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveThread(null)}
+                  aria-label="Back to conversations"
+                  className={cn(
+                    "inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-fg-200",
+                    "transition-instant transition-colors hover:bg-ink-200 hover:text-fg-000",
+                    focusRing,
+                  )}
+                >
+                  <ArrowLeft className="size-3.5" aria-hidden="true" />
+                </button>
+                <span className="truncate text-label font-medium text-fg-000">
+                  {activeThread ? threadTitle(activeThread) : "Conversation"}
+                </span>
+              </div>
+
+              {threadMessagesState.status === "loading" ? (
+                <p className="px-2 text-meta text-fg-200">Loading conversation…</p>
+              ) : threadMessagesState.status === "error" ? (
+                <p className="px-2 text-meta text-red-fg">{threadMessagesState.error}</p>
+              ) : (
+                <MessageList messages={threadMessagesState.messages} onEdit={handleEdit} onRegenerate={handleRegenerate} />
+              )}
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3",
+                // Fullscreen is the one mode with room to breathe; the column
+                // stays readable instead of stretching a 14px body across a
+                // 2560px display.
+                mode === "fullscreen" && "mx-auto w-full max-w-3xl",
+              )}
+            >
+              <ThreadList workspaceSlug={workspace.slug} />
+              <Separator />
+              <EmptyConversation
+                prompts={prompts}
+                onPick={(prompt) => {
+                  setDraft(prompt);
+                  composerRef.current?.focus();
+                }}
+              />
+            </div>
+          )}
 
           <div
             className={cn(
@@ -196,24 +262,15 @@ export function CopilotDock({ open, onClose }: CopilotDockProps) {
             )}
           >
             <ContextChips />
-            <Textarea
-              ref={composerRef}
-              rows={3}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              aria-label="Ask the copilot"
+            <Composer
+              workspaceSlug={workspace.slug}
+              envelope={envelope}
+              threadId={activeThreadId}
+              draft={draft}
+              onDraftChange={setDraft}
+              composerRef={composerRef}
               placeholder={`Ask about ${entityLabel ?? "this workspace"}…`}
             />
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-meta text-fg-200" id="copilot-send-hint">
-                {draft.trim()
-                  ? "Context below is live — replies arrive with streaming."
-                  : "⌘J closes the copilot."}
-              </p>
-              <Button size="sm" disabled aria-describedby="copilot-send-hint">
-                Send
-              </Button>
-            </div>
           </div>
         </motion.aside>
       ) : null}

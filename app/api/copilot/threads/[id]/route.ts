@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { requireRole } from "@/lib/auth/guard";
 import { getSessionFromRequest } from "@/lib/auth/session";
-import { deleteThread, renameThread } from "@/lib/repos/copilot";
+import { deleteThread, getThread, listMessages, renameThread } from "@/lib/repos/copilot";
 
 const renameSchema = z.object({
   workspaceSlug: z.string().min(1),
@@ -9,6 +9,34 @@ const renameSchema = z.object({
 });
 
 const deleteSchema = z.object({ workspaceSlug: z.string().min(1) });
+
+/**
+ * Session spec item 9: "threads survive reload." The dock only ever holds
+ * thread state in a client store (features/copilot/threads/store.ts) and a
+ * per-thread message store (features/copilot/messages/store.ts) -- neither
+ * persists across a real page reload -- so re-opening a thread has to fetch
+ * its messages from here, the same way ThreadList already fetches the
+ * thread list itself on mount.
+ */
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const workspaceSlug = new URL(request.url).searchParams.get("workspaceSlug");
+  if (!workspaceSlug) {
+    return Response.json({ error: "Missing workspaceSlug." }, { status: 400 });
+  }
+
+  const context = await requireRole(request, workspaceSlug, "member");
+  if (context instanceof Response) return context;
+
+  const userId = getSessionFromRequest(request)?.userId;
+  if (!userId) return Response.json({ error: "Sign in to continue." }, { status: 401 });
+
+  const thread = await getThread(context.workspace.id, userId, id);
+  if (!thread) return Response.json({ error: "Conversation not found." }, { status: 404 });
+
+  const messages = await listMessages(context.workspace.id, id);
+  return Response.json({ thread, messages });
+}
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

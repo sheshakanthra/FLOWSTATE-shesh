@@ -64,6 +64,20 @@
       "when": 1786540000000,
       "tag": "0008_b6_immutability_trigger_update_only",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786900045429,
+      "tag": "0009_pale_screwball",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786944102710,
+      "tag": "0010_mean_butterfly",
+      "breakpoints": true
     }
   ]
 }

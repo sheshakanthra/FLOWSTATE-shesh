@@ -1,5 +1,12 @@
 import { completeGroqChat, streamGroqChat, type GroqMessage } from "./groq";
 
+// Re-exported, not just thrown internally: CLAUDE.md's rule is "feature code
+// imports getProvider() and nothing else" from this file specifically --
+// lib/llm/errors.ts still exists only so groq.ts and this file can share the
+// classes without one importing the other, but a catch block outside
+// lib/llm/ should never need to reach into errors.ts directly.
+export { LLMContextTooLargeError, LLMProviderUnavailableError, LLMRateLimitError } from "./errors";
+
 /**
  * The interface CLAUDE.md names exactly ("lib/llm/provider.ts"): feature
  * code imports `getProvider()` and these types, never `groq.ts` or a model

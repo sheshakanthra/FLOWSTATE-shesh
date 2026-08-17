@@ -166,7 +166,13 @@ test.describe("session spec item 5: threads", () => {
 
     const threads = dock.getByRole("list", { name: "Conversations" });
 
-    await dock.getByRole("button", { name: "New" }).click();
+    // C2: creating a thread now switches straight into it (the message
+    // view), not just to a new row in the still-visible list -- there's
+    // somewhere to switch *to* now that the message view exists. Back out
+    // to the list to exercise rename/delete, which still live on the row.
+    await dock.getByRole("button", { name: "New", exact: true }).click();
+    await expect(dock.getByRole("button", { name: "Back to conversations" })).toBeVisible();
+    await dock.getByRole("button", { name: "Back to conversations" }).click();
     await expect(threads.getByText("New conversation").first()).toBeVisible();
 
     const uniqueName = `Recall triage ${Date.now()}`;
