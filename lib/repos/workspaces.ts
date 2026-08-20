@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { members, workspaces } from "@/db/schema";
+import { members, users, workspaces } from "@/db/schema";
 import { withScope } from "./db";
 
 export interface WorkspaceSummary {
@@ -65,4 +65,24 @@ export async function getWorkspaceContext(
 
 export async function renameWorkspace(workspaceId: string, name: string): Promise<void> {
   await db.update(workspaces).set({ name }).where(eq(workspaces.id, workspaceId));
+}
+
+export interface WorkspaceMemberSummary {
+  id: string;
+  name: string;
+  email: string;
+}
+
+/** D1's delegate picker (features/today/priority/actions.tsx) -- who a
+ *  priority item can be handed to. Ordered by name for a stable,
+ *  predictable picker list rather than membership recency. */
+export async function listMembers(workspaceId: string): Promise<WorkspaceMemberSummary[]> {
+  return withScope({ workspaceId }, (tx) =>
+    tx
+      .select({ id: users.id, name: users.name, email: users.email })
+      .from(members)
+      .innerJoin(users, eq(users.id, members.userId))
+      .where(eq(members.workspaceId, workspaceId))
+      .orderBy(users.name),
+  );
 }

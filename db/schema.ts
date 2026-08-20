@@ -51,6 +51,16 @@ export const toolCallStatusEnum = pgEnum("tool_call_status", [
   "failed",
 ]);
 export const prioritySeverityEnum = pgEnum("priority_severity", ["critical", "high", "medium", "low"]);
+// D1: the five item types this slice's queue ranks -- see
+// features/today/lib/item-types.ts for their display metadata and
+// lib/repos/priorities.ts for what materializes each one.
+export const priorityItemTypeEnum = pgEnum("priority_item_type", [
+  "failed_run",
+  "human_approval",
+  "declining_success_rate",
+  "stale_draft",
+  "cost_spike",
+]);
 
 // ---- identity (not workspace-scoped) ----
 
@@ -290,7 +300,9 @@ export const toolCalls = pgTable("tool_calls", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const priorityItems = pgTable("priority_items", {
+export const priorityItems = pgTable(
+  "priority_items",
+  {
   id: uuid("id").primaryKey().defaultRandom(),
   workspaceId: uuid("workspace_id")
     .notNull()
@@ -302,8 +314,36 @@ export const priorityItems = pgTable("priority_items", {
   sourceId: uuid("source_id"),
   assigneeId: uuid("assignee_id").references(() => users.id, { onDelete: "set null" }),
   resolved: boolean("resolved").notNull().default(false),
+  // D1: which of the five ranked kinds this is -- drives both the ranking
+  // function's per-type blast-radius formula (features/today/lib/rank.ts)
+  // and the row's primary action (Approve vs Retry vs Resolve --
+  // features/today/lib/item-types.ts).
+  itemType: priorityItemTypeEnum("item_type").notNull().default("failed_run"),
+  // Raw, type-specific ranking inputs -- materialized once, at the moment
+  // this row is written (a run failing, a nightly-equivalent sync pass),
+  // never recomputed by joining agents/agent_runs at read time. What they
+  // mean depends on `itemType` (e.g. consecutive-failure count for
+  // failed_run, days overdue for stale_draft, percent increase for
+  // cost_spike) -- see rank.ts's own doc comments for the exact mapping.
+  // `computeScore` (rank.ts) is the only place that turns these into an
+  // actual blast radius / entity value / score.
+  magnitude: numeric("magnitude", { precision: 10, scale: 4 }).notNull().default("1"),
+  entitySignal: numeric("entity_signal", { precision: 10, scale: 4 }).notNull().default("0"),
+  // Gate item 7: snoozed items return at the correct time. Null = not
+  // snoozed. A snoozed-but-not-yet-due item is excluded from the active
+  // queue by `lib/repos/priorities.ts#listPriorityItems`, not filtered
+  // client-side, so it can't flash into view on a slow client before being
+  // hidden.
+  snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  },
+  // Gate item 3 ("full paint under 800ms with 500 priority items"):
+  // `listPriorityItems`'s one query is `WHERE workspace_id = ? AND resolved
+  // = false`, and Postgres doesn't index a foreign-key column
+  // automatically -- the same reasoning B6's `agent_runs_agent_id_started_at_idx`
+  // documents for its own "500 agents" perf gate.
+  (table) => [index("priority_items_workspace_id_resolved_idx").on(table.workspaceId, table.resolved)],
+);
 
 export const activityEvents = pgTable("activity_events", {
   id: uuid("id").primaryKey().defaultRandom(),

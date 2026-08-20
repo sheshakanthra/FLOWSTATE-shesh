@@ -2,6 +2,7 @@ import { z } from "zod";
 import { requireRole } from "@/lib/auth/guard";
 import { getAgentDetail } from "@/lib/repos/agents";
 import { createRun, finishRun, recordStep, type StepEntry } from "@/lib/repos/runs";
+import { syncAgentPriorityItems } from "@/lib/repos/priorities";
 import { getVersion } from "@/lib/repos/agent-versions";
 import { runGraph, type EngineNode } from "@/features/agents/engine/executor";
 import type { EngineGraphEdge } from "@/features/agents/engine/scope-resolver";
@@ -175,6 +176,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           outputTokens: result.totalOutputTokens,
           errorMessage: result.errorMessage,
         });
+        // D1: the real "materialize on event" hook -- a run finishing
+        // (success or failure) is the trigger, not the Today page's own
+        // render. See lib/repos/priorities.ts#syncAgentPriorityItems for
+        // what it derives from this agent's now-updated run history.
+        // Best-effort: a sync failure shouldn't fail the run response the
+        // client is waiting on.
+        await syncAgentPriorityItems(workspaceId, agentId).catch(() => {});
 
         send({
           type: "run-end",
@@ -195,6 +203,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           outputTokens: 0,
           errorMessage: message,
         });
+        await syncAgentPriorityItems(workspaceId, agentId).catch(() => {});
         send({ type: "run-error", message });
       } finally {
         try {

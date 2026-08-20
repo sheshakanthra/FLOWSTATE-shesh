@@ -37,6 +37,16 @@ function timeDaysAgo(daysAgo: number): Date {
   return new Date(now - daysAgo * DAY_MS - (DAY_MS - jitterMs));
 }
 
+/** D1's one seeded snooze example -- matches `features/today/priority/
+ *  snooze.tsx#getSnoozeUntil`'s own "tomorrow" preset (9am local), so the
+ *  seeded row demonstrates exactly what a real snooze click would produce. */
+function tomorrowAt9am(): Date {
+  const target = new Date(now);
+  target.setDate(target.getDate() + 1);
+  target.setHours(9, 0, 0, 0);
+  return target;
+}
+
 /**
  * B4 gate item 1 needs a real, runnable, 6-node graph -- nothing seeded
  * one produces this by construction (`agentVersions.graph` is hardcoded
@@ -516,116 +526,107 @@ async function main() {
   await withScope({ workspaceId: workspace.id }, (tx) => tx.insert(runSteps).values(stepRows));
 
   // ---- priority items ----
+  // D1's exact five item types (features/today/lib/item-types.ts) -- not
+  // the looser, pre-D1 sourceType vocabulary this block used to seed (a
+  // client data-quality note, a generic onboarding row, a membership
+  // event): those don't classify into any of the five, and "no item types
+  // from features not in this slice" (D1's own Out of scope) means they're
+  // dropped here rather than shoehorned into the closest-sounding type.
+  // `magnitude`/`entitySignal` are real, plausible materialized inputs --
+  // the same numbers `lib/repos/priorities.ts#syncAgentPriorityItems` would
+  // have derived from real run history, not placeholders -- so the ranking
+  // function and score explainer have honest arithmetic to show against
+  // seed data, not just live-synced data.
   await withScope({ workspaceId: workspace.id }, (tx) =>
     tx.insert(priorityItems).values([
       {
         workspaceId: workspace.id,
-        title: "Insurance Verification has failed 7 times this week",
+        title: "Lumen Dental — Insurance Verification has failed 7 times in a row",
         description: "Delta Dental's portal is rejecting the saved session — Priya needs to re-authenticate.",
         severity: "critical",
-        sourceType: "agent_run",
+        itemType: "failed_run",
+        sourceType: "agent",
         sourceId: agentByKey.insurance!.id,
+        magnitude: "7",
+        entitySignal: "14",
         resolved: false,
       },
       {
         workspaceId: workspace.id,
-        title: "Delta Dental portal credentials may be expired",
-        description: "Session cookie has been rejected on every run since Tuesday.",
-        severity: "critical",
-        sourceType: "system",
-        resolved: false,
-      },
-      {
-        workspaceId: workspace.id,
-        title: "Cigna eligibility endpoint intermittently returning 503",
-        description: "Happening across roughly a third of Insurance Verification runs this week.",
+        title: "Insurance Verification's success rate dropped 32 points",
+        description: "Cigna's eligibility endpoint is intermittently returning 503 — roughly a third of runs this week failed on that step alone.",
         severity: "high",
-        sourceType: "system",
-        resolved: false,
-      },
-      {
-        workspaceId: workspace.id,
-        title: "Harbor & Vine: 1-star review needs a manual reply",
-        description: "Review Responder flagged this one instead of auto-drafting — mentions a refund request.",
-        severity: "high",
-        sourceType: "agent_run",
-        sourceId: agentByKey.review!.id,
-        assigneeId: jordan.id,
+        itemType: "declining_success_rate",
+        sourceType: "agent",
+        sourceId: agentByKey.insurance!.id,
+        magnitude: "32",
+        entitySignal: "14",
         resolved: false,
       },
       {
         workspaceId: workspace.id,
         title: "Review Responder approval queue has 4 drafts waiting",
-        description: "Oldest draft is 2 days old.",
+        description: "Oldest draft is 2 days old — including a flagged 1-star review mentioning a refund request.",
         severity: "high",
-        sourceType: "agent_run",
+        itemType: "human_approval",
+        sourceType: "agent",
         sourceId: agentByKey.review!.id,
         assigneeId: jordan.id,
+        magnitude: "4",
+        entitySignal: "9",
         resolved: false,
       },
       {
         workspaceId: workspace.id,
-        title: "3 Lumen Dental patients missing phone numbers",
-        description: "Recall Scheduler can't text a reminder without one — needs a PMS data cleanup.",
-        severity: "medium",
-        sourceType: "client",
-        assigneeId: priya.id,
-        resolved: false,
-      },
-      {
-        workspaceId: workspace.id,
-        title: "Crestpoint Listing Copy Generator still in draft",
+        title: "Crestpoint Listing Copy Generator has been a draft for 9 days",
         description: "2 listings are waiting on this before it can go live.",
         severity: "medium",
-        sourceType: "client",
+        itemType: "stale_draft",
+        sourceType: "agent",
+        sourceId: agentByKey.listing!.id,
         assigneeId: sam.id,
+        magnitude: "9",
+        entitySignal: "1",
         resolved: false,
       },
       {
         workspaceId: workspace.id,
-        title: "Twilio SMS spend up 18% for Recall Scheduler this week",
-        description: "Worth checking whether retry logic is double-sending on timeouts.",
-        severity: "low",
-        sourceType: "agent_run",
+        title: "Recall Scheduler's cost is up 64% this week",
+        description: "Twilio SMS spend jumped from $2.05 to $3.40 over the last 7 days — worth checking whether retry logic is double-sending on timeouts.",
+        severity: "high",
+        itemType: "cost_spike",
+        sourceType: "agent",
         sourceId: agentByKey.recall!.id,
+        magnitude: "64",
+        entitySignal: "340",
         resolved: false,
       },
       {
         workspaceId: workspace.id,
-        title: "Recall Scheduler SMS failed for 2 patients — bad phone numbers",
-        description: "Numbers corrected in the PMS; next scheduled run will retry.",
+        title: "Recall Scheduler run failed for 2 patients — bad phone numbers",
+        description: "Numbers corrected in the PMS; next scheduled run retried successfully.",
         severity: "medium",
-        sourceType: "agent_run",
+        itemType: "failed_run",
+        sourceType: "agent",
         sourceId: agentByKey.recall!.id,
         assigneeId: priya.id,
+        magnitude: "2",
+        entitySignal: "20",
         resolved: true,
       },
       {
         workspaceId: workspace.id,
-        title: "New client onboarding: Crestpoint Realty contract signed",
-        description: "Kickoff call scheduled; Sam is building the first agent.",
-        severity: "low",
-        sourceType: "client",
-        assigneeId: sam.id,
-        resolved: true,
-      },
-      {
-        workspaceId: workspace.id,
-        title: "Sam Okafor added as workspace member",
-        description: "Onboarded for the Crestpoint engagement.",
-        severity: "low",
-        sourceType: "system",
-        resolved: true,
-      },
-      {
-        workspaceId: workspace.id,
-        title: "Escalate Insurance Verification outage to Delta Dental support",
-        description: "Support ticket #48213 opened; awaiting a response on the portal session policy change.",
-        severity: "critical",
-        sourceType: "agent_run",
-        sourceId: agentByKey.insurance!.id,
-        assigneeId: priya.id,
+        title: "Review Responder run failed once — Yelp API timeout",
+        description: "A single transient failure; keeping an eye on it before it's worth waking anyone up for.",
+        severity: "medium",
+        itemType: "failed_run",
+        sourceType: "agent",
+        sourceId: agentByKey.review!.id,
+        assigneeId: jordan.id,
+        magnitude: "1",
+        entitySignal: "9",
         resolved: false,
+        snoozedUntil: tomorrowAt9am(),
       },
     ]),
   );
@@ -843,7 +844,7 @@ async function main() {
 
   console.log(`Seeded workspace "${workspace.name}" (/w/${workspace.slug}):`);
   console.log(`  3 users, 4 agents, ${insertedRuns.length} runs, ${stepRows.length} run steps`);
-  console.log(`  12 priority items, ${allEvents.length} activity events`);
+  console.log(`  7 priority items, ${allEvents.length} activity events`);
   console.log(`Sign in with priya@meridianops.com / demo-password-1234 (or jordan@/sam@ — same password).`);
 }
 
