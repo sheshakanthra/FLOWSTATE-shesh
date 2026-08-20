@@ -5,6 +5,7 @@ import { AlertTriangle, Send as SendIcon, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { PromptLibraryMenu } from "../prompt-library";
 import type { CopilotContext } from "../context/envelope";
 import { useMessagesStore, useThreadMessages, type StreamErrorKind } from "../messages/store";
 import { useThreadsStore } from "../threads/store";
@@ -42,7 +43,7 @@ export interface ComposerProps {
   threadId: string | null;
   draft: string;
   onDraftChange: (value: string) => void;
-  composerRef: React.Ref<HTMLTextAreaElement>;
+  composerRef: React.RefObject<HTMLTextAreaElement | null>;
   placeholder?: string;
 }
 
@@ -115,21 +116,24 @@ export function Composer({ workspaceSlug, envelope, threadId, draft, onDraftChan
         </div>
       ) : null}
 
-      <Textarea
-        ref={composerRef}
-        rows={3}
-        value={draft}
-        onChange={(event) => onDraftChange(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            void handleSend();
-          }
-        }}
-        aria-label="Ask the copilot"
-        placeholder={placeholder ?? "Ask about what you're looking at…"}
-        disabled={sending}
-      />
+      <div className="relative">
+        <PromptLibraryMenu workspaceSlug={workspaceSlug} draft={draft} onDraftChange={onDraftChange} textareaRef={composerRef} />
+        <Textarea
+          ref={composerRef}
+          rows={3}
+          value={draft}
+          onChange={(event) => onDraftChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              void handleSend();
+            }
+          }}
+          aria-label="Ask the copilot"
+          placeholder={placeholder ?? "Ask about what you're looking at…"}
+          disabled={sending}
+        />
+      </div>
 
       <div className="flex items-center justify-between gap-2">
         <p className={cn("text-meta text-fg-200", canStop && "animate-pulse")} id="copilot-send-hint">

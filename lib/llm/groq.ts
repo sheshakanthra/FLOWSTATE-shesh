@@ -64,17 +64,42 @@ export interface GroqUsage {
   completionTokens: number;
 }
 
-export type GroqStreamChunk = { type: "token"; delta: string } | { type: "done"; content: string; usage: GroqUsage };
+/** OpenAI-compatible function tool spec -- the shape Groq's own docs mirror
+ *  verbatim. `provider.ts` is the only caller; nothing else may import this
+ *  file, so this type never needs to be reasoned about outside lib/llm/. */
+export interface GroqToolSpec {
+  type: "function";
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+}
+
+export interface GroqToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+export type GroqStreamChunk =
+  | { type: "token"; delta: string }
+  | { type: "tool_call"; id: string; name: string; arguments: string }
+  | { type: "done"; content: string; usage: GroqUsage };
 
 export interface GroqChatParams {
   model: string;
   messages: GroqMessage[];
   temperature?: number;
   signal?: AbortSignal;
+  tools?: GroqToolSpec[];
+  responseFormat?: "json";
 }
 
 interface GroqChunkPayload {
-  choices?: { delta?: { content?: string }; finish_reason?: string | null }[];
+  choices?: {
+    delta?: {
+      content?: string;
+      tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[];
+    };
+    finish_reason?: string | null;
+  }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   x_groq?: { usage?: { prompt_tokens?: number; completion_tokens?: number } };
 }
@@ -91,6 +116,14 @@ function getApiKey(): string {
  * whole response (no incremental UI) should still consume this generator
  * to completion rather than duplicating the parsing logic -- see
  * `completeGroqChat` below, which does exactly that.
+ *
+ * C3: when `params.tools` is set and the model chooses to call one instead
+ * of replying with text, Groq's streaming deltas carry `tool_calls`
+ * fragments keyed by array `index` -- an id and the function name typically
+ * arrive whole on the first fragment for that index, `arguments` arrives in
+ * pieces across several fragments and has to be concatenated, not replaced.
+ * Accumulated per index below and flushed as one `"tool_call"` chunk each
+ * once the stream ends, in index order (the order the model proposed them).
  */
 export async function* streamGroqChat(params: GroqChatParams): AsyncGenerator<GroqStreamChunk> {
   let response: Response;
@@ -107,6 +140,9 @@ export async function* streamGroqChat(params: GroqChatParams): AsyncGenerator<Gr
         temperature: params.temperature,
         stream: true,
         stream_options: { include_usage: true },
+        tools: params.tools,
+        tool_choice: params.tools ? "auto" : undefined,
+        response_format: params.responseFormat === "json" ? { type: "json_object" } : undefined,
       }),
       signal: params.signal,
     });
@@ -131,6 +167,12 @@ export async function* streamGroqChat(params: GroqChatParams): AsyncGenerator<Gr
   let buffer = "";
   let content = "";
   let usage: GroqUsage = { promptTokens: 0, completionTokens: 0 };
+  // Keyed by Groq's own `tool_calls[].index`, not insertion order -- a
+  // fragment for index 1 can in principle arrive before index 0's is
+  // complete. `id`/`name` are only ever set once (Groq sends them whole on
+  // that index's first fragment); `arguments` is concatenated across every
+  // fragment for that index.
+  const toolCallBuffers = new Map<number, { id: string; name: string; args: string }>();
 
   try {
     while (true) {
@@ -160,6 +202,15 @@ export async function* streamGroqChat(params: GroqChatParams): AsyncGenerator<Gr
           yield { type: "token", delta };
         }
 
+        for (const fragment of parsed.choices?.[0]?.delta?.tool_calls ?? []) {
+          const existing = toolCallBuffers.get(fragment.index);
+          toolCallBuffers.set(fragment.index, {
+            id: existing?.id || fragment.id || "",
+            name: existing?.name || fragment.function?.name || "",
+            args: (existing?.args ?? "") + (fragment.function?.arguments ?? ""),
+          });
+        }
+
         const rawUsage = parsed.usage ?? parsed.x_groq?.usage;
         if (rawUsage) {
           usage = {
@@ -171,6 +222,12 @@ export async function* streamGroqChat(params: GroqChatParams): AsyncGenerator<Gr
     }
   } finally {
     reader.releaseLock();
+  }
+
+  for (const index of [...toolCallBuffers.keys()].sort((a, b) => a - b)) {
+    const call = toolCallBuffers.get(index)!;
+    if (!call.name) continue;
+    yield { type: "tool_call", id: call.id || `call_${index}`, name: call.name, arguments: call.args };
   }
 
   yield { type: "done", content, usage };

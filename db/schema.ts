@@ -319,6 +319,23 @@ export const activityEvents = pgTable("activity_events", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// C3 (spec item 8): saved prompts, workspace-shared -- not per-user like
+// copilot_threads. Every member of the workspace sees and can insert into
+// the same list, which is the whole point ("saving a new prompt persists
+// workspace-wide"); there is no owner/creator-only edit or delete in this
+// slice's scope, so `createdBy` is attribution only, never an authorization
+// check.
+export const promptLibrary = pgTable("prompt_library", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ---- relations (query API ergonomics only — RLS/authorization never relies
 // on these; every scoped query goes through lib/repos and passes workspaceId
 // explicitly) ----
@@ -382,6 +399,11 @@ export const priorityItemsRelations = relations(priorityItems, ({ one }) => ({
 export const activityEventsRelations = relations(activityEvents, ({ one }) => ({
   workspace: one(workspaces, { fields: [activityEvents.workspaceId], references: [workspaces.id] }),
   actor: one(users, { fields: [activityEvents.actorId], references: [users.id] }),
+}));
+
+export const promptLibraryRelations = relations(promptLibrary, ({ one }) => ({
+  workspace: one(workspaces, { fields: [promptLibrary.workspaceId], references: [workspaces.id] }),
+  author: one(users, { fields: [promptLibrary.createdBy], references: [users.id] }),
 }));
 
 /**

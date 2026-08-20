@@ -5,7 +5,9 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowLeft, Sparkles, X } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { base, instant, useReducedMotion } from "@/lib/motion";
+import { useUndoShortcuts } from "@/lib/undo/shortcuts";
 import { cn, focusRing } from "@/lib/utils";
+import { ApprovalCard } from "../actions/approval-card";
 import { Composer } from "../composer";
 import { ContextChips } from "../context/chips";
 import { useCopilotSnapshot, useCopilotWorkspace } from "../context/provider";
@@ -46,6 +48,16 @@ export function CopilotDock({ open, onClose }: CopilotDockProps) {
   const reducedMotion = useReducedMotion();
   const transition = reducedMotion ? instant : base;
 
+  // C3 gate item 5: "⌘Z undoes an approved copilot action." The shell
+  // mounts CopilotDock once, unconditionally (AnimatePresence below only
+  // toggles the visible <aside>), so binding here -- not gated on `open` --
+  // makes the shortcut active for the whole authenticated app, matching
+  // CLAUDE.md's "undo is a platform primitive, not a text-editor feature"
+  // rather than features/agents/canvas/index.tsx's own narrower precedent
+  // (bound only while the canvas itself is mounted, since graph edits are
+  // only ever made there). A copilot action can be approved from any page.
+  useUndoShortcuts();
+
   const [mode, setMode] = React.useState<DockMode>("docked");
   const { size, handleProps } = useDockResize();
 
@@ -59,6 +71,9 @@ export function CopilotDock({ open, onClose }: CopilotDockProps) {
   const threadMessagesState = useThreadMessages(activeThreadId);
   const editAndResend = useMessagesStore((state) => state.editAndResend);
   const regenerate = useMessagesStore((state) => state.regenerate);
+  const approveToolCall = useMessagesStore((state) => state.approveToolCall);
+  const rejectToolCall = useMessagesStore((state) => state.rejectToolCall);
+  const retryToolCall = useMessagesStore((state) => state.retryToolCall);
 
   // Session spec item 9: threads survive reload -- messages are fetched the
   // first time a thread is opened in this session, not held anywhere
@@ -261,6 +276,16 @@ export function CopilotDock({ open, onClose }: CopilotDockProps) {
               mode === "fullscreen" && "mx-auto w-full max-w-3xl",
             )}
           >
+            <AnimatePresence>
+              {activeThreadId && threadMessagesState.toolCall ? (
+                <ApprovalCard
+                  toolCall={threadMessagesState.toolCall}
+                  onApprove={() => void approveToolCall({ workspaceSlug: workspace.slug, threadId: activeThreadId })}
+                  onReject={() => void rejectToolCall({ workspaceSlug: workspace.slug, threadId: activeThreadId })}
+                  onRetry={() => void retryToolCall({ workspaceSlug: workspace.slug, threadId: activeThreadId })}
+                />
+              ) : null}
+            </AnimatePresence>
             <ContextChips />
             <Composer
               workspaceSlug={workspace.slug}

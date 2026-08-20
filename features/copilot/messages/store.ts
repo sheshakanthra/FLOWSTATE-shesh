@@ -1,8 +1,36 @@
 "use client";
 
 import { create } from "zustand";
+import { toast } from "@/components/ui/toast";
+import { finish as firingFinish, start as firingStart } from "@/components/firing-bar/store";
+import { pushUndoEntry, undo as undoLast } from "@/lib/undo/store";
+import { buildUndoRedo } from "../actions/undo-dispatch";
 import type { CopilotContext } from "../context/envelope";
-import { streamCopilotMessage, type StreamCitation } from "../stream/client";
+import { streamCopilotMessage, type StreamCitation, type StreamToolResult } from "../stream/client";
+
+/** The copilot's client-side view of one in-flight or resolved tool call
+ *  for the active thread -- at most one at a time (spec: "no autonomous
+ *  multi-step chains," and this dock has exactly one composer), so this is
+ *  a single nullable field on `ThreadMessagesState` rather than a list.
+ *  `"running"` covers both the initial `run()` (right after `tool_start`,
+ *  before a `toolCallId` even exists) and a subsequent approve/retry --
+ *  the UI (features/copilot/actions/approval-card.tsx) renders the same
+ *  shimmering state for both. */
+export interface ToolCallClientState {
+  toolCallId: string | null;
+  toolName: string;
+  status: "running" | "pending" | "rejected" | "succeeded" | "failed";
+  preview: StreamToolResult["preview"] | null;
+  commitResult?: StreamToolResult["commitResult"];
+  error?: string;
+  userMessageId: string;
+  /** The FiringBar operation id `tool_start` registered (gate item 6) --
+   *  carried on the state so whichever event or action resolves this call
+   *  next (`tool_result`, `tool_denied`, approve/reject/retry) can call
+   *  `finish()` on the same operation rather than leaving it running
+   *  forever in the bar. */
+  firingId: string | null;
+}
 
 export interface CopilotMessage {
   id: string;
@@ -25,6 +53,10 @@ export interface ThreadMessagesState {
   error: string | null;
   streaming: boolean;
   streamError: { kind: StreamErrorKind; message: string } | null;
+  /** The active/most-recent tool call for this thread, or null once
+   *  there's never been one, or after a fresh `send`/`edit`/`regenerate`
+   *  starts a new turn. */
+  toolCall: ToolCallClientState | null;
   /**
    * Bumped by every operation that will eventually write `messages` back
    * (`load`, and `runStream`'s `send`/`editAndResend`/`regenerate`/`retry`).
@@ -50,8 +82,16 @@ const EMPTY_THREAD_STATE: ThreadMessagesState = {
   error: null,
   streaming: false,
   streamError: null,
+  toolCall: null,
   generation: 0,
 };
+
+/** "create_agent_from_description" -> "create agent from description" --
+ *  every tool name is already a readable snake_case phrase (features/copilot/
+ *  tools/definitions/*.ts), so this needs no per-tool lookup table. */
+function humanizeToolName(toolName: string): string {
+  return toolName.replace(/_/g, " ");
+}
 
 interface RunStreamParams {
   workspaceSlug: string;
@@ -105,6 +145,14 @@ interface MessagesStoreState {
   retry: (params: { workspaceSlug: string; threadId: string; envelope: CopilotContext }) => Promise<void>;
   stop: () => void;
   dismissStreamError: (threadId: string) => void;
+
+  /** C3 gate item 9: approving/rejecting/retrying all resolve the thread's
+   *  current `toolCall` by id -- the three differ only in which
+   *  `/api/copilot/execute` action they send and (for approve) that a
+   *  successful result registers an undo entry. */
+  approveToolCall: (params: { workspaceSlug: string; threadId: string }) => Promise<void>;
+  rejectToolCall: (params: { workspaceSlug: string; threadId: string }) => Promise<void>;
+  retryToolCall: (params: { workspaceSlug: string; threadId: string }) => Promise<void>;
 }
 
 type Setter = (fn: (state: MessagesStoreState) => Partial<MessagesStoreState>) => void;
@@ -138,12 +186,21 @@ function updateThreadIfCurrent(
   updateThread(set, threadId, updater);
 }
 
+interface RawToolCall {
+  id: string;
+  toolName: string;
+  input: unknown;
+  output: { preview: StreamToolResult["preview"]; commitResult?: StreamToolResult["commitResult"]; error?: string };
+  status: ToolCallClientState["status"] | "approved";
+}
+
 interface RawMessage {
   id: string;
   role: CopilotMessage["role"];
   content: string;
   citations: StreamCitation[] | null;
   createdAt: string;
+  toolCall: RawToolCall | null;
 }
 
 export const useMessagesStore = create<MessagesStoreState>((set, get) => ({
@@ -167,10 +224,32 @@ export const useMessagesStore = create<MessagesStoreState>((set, get) => ({
         return;
       }
       const data = (await response.json()) as { messages: RawMessage[] };
+      // Gate item 5: "a pending approval survives reload." Only the most
+      // recent message's tool call (if any) becomes the active `toolCall`
+      // slot -- older, already-resolved tool calls stay in the thread's
+      // history conceptually but aren't re-surfaced as a card on reload,
+      // the same way an older assistant message's action row isn't singled
+      // out once a newer one exists (see message.tsx's own
+      // `isLatestAssistant`).
+      const lastWithToolCall = [...data.messages].reverse().find((message) => message.toolCall !== null);
+      const toolCall: ToolCallClientState | null = lastWithToolCall?.toolCall
+        ? {
+            toolCallId: lastWithToolCall.toolCall.id,
+            toolName: lastWithToolCall.toolCall.toolName,
+            status: lastWithToolCall.toolCall.status === "approved" ? "running" : lastWithToolCall.toolCall.status,
+            preview: lastWithToolCall.toolCall.output.preview,
+            commitResult: lastWithToolCall.toolCall.output.commitResult,
+            error: lastWithToolCall.toolCall.output.error,
+            userMessageId: lastWithToolCall.id,
+            firingId: null,
+          }
+        : null;
+
       updateThreadIfCurrent(set, get, threadId, myGeneration, (state) => ({
         ...state,
         status: "ready",
         error: null,
+        toolCall,
         messages: data.messages.map((message) => ({
           id: message.id,
           role: message.role,
@@ -211,7 +290,88 @@ export const useMessagesStore = create<MessagesStoreState>((set, get) => ({
   dismissStreamError: (threadId) => {
     updateThread(set, threadId, (state) => ({ ...state, streamError: null }));
   },
+
+  approveToolCall: (params) => resolveToolCall(set, get, "approve", params),
+  rejectToolCall: (params) => resolveToolCall(set, get, "reject", params),
+  retryToolCall: (params) => resolveToolCall(set, get, "retry", params),
 }));
+
+/**
+ * The one function behind approve/reject/retry (gate item 9) -- all three
+ * POST the same `/api/copilot/execute` shape, differing only in `action`
+ * and (for approve) that a `"succeeded"` result registers an undo entry
+ * exactly the way `useUndoable` does (gate item 5's ⌘Z), just without the
+ * hook: `pushUndoEntry`/`toast` are both plain functions, and this runs
+ * from a store action, not a component.
+ */
+async function resolveToolCall(
+  set: Setter,
+  get: Getter,
+  action: "approve" | "reject" | "retry",
+  params: { workspaceSlug: string; threadId: string },
+): Promise<void> {
+  const { threadId, workspaceSlug } = params;
+  const current = get().byThread[threadId]?.toolCall;
+  if (!current || !current.toolCallId) return;
+  const toolCallId = current.toolCallId;
+
+  const firingLabel = action === "approve" ? "Approving" : action === "reject" ? "Declining" : "Retrying";
+  const firingId = firingStart({ label: `${firingLabel} ${humanizeToolName(current.toolName)}`, initiator: "Copilot" });
+  updateThread(set, threadId, (state) =>
+    state.toolCall ? { ...state, toolCall: { ...state.toolCall, status: "running", firingId } } : state,
+  );
+
+  try {
+    const response = await fetch("/api/copilot/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, workspaceSlug, toolCallId }),
+    });
+    const body = (await response.json().catch(() => null)) as
+      | (StreamToolResult & { error?: string })
+      | { error: string }
+      | null;
+
+    if (!response.ok || !body || !("toolCallId" in body)) {
+      firingFinish(firingId, "error");
+      const message = body && "error" in body ? body.error : "This action failed.";
+      updateThread(set, threadId, (state) =>
+        state.toolCall ? { ...state, toolCall: { ...state.toolCall, status: "failed", error: message, firingId: null } } : state,
+      );
+      return;
+    }
+
+    firingFinish(firingId, action === "reject" ? "cancelled" : body.status === "failed" ? "error" : "success");
+    updateThread(set, threadId, (state) =>
+      state.toolCall
+        ? {
+            ...state,
+            toolCall: {
+              ...state.toolCall,
+              toolCallId: body.toolCallId,
+              status: body.status,
+              preview: body.preview,
+              commitResult: body.commitResult,
+              error: body.error,
+              firingId: null,
+            },
+          }
+        : state,
+    );
+
+    if (body.status === "succeeded" && body.commitResult) {
+      const { undo, redo } = buildUndoRedo(body.commitResult.undo);
+      pushUndoEntry({ id: crypto.randomUUID(), label: body.commitResult.summary, undo, redo });
+      toast({ title: body.commitResult.summary, action: { label: "Undo", onClick: () => undoLast() } });
+    }
+  } catch (error) {
+    firingFinish(firingId, "error");
+    const message = error instanceof Error ? error.message : "This action failed.";
+    updateThread(set, threadId, (state) =>
+      state.toolCall ? { ...state, toolCall: { ...state.toolCall, status: "failed", error: message, firingId: null } } : state,
+    );
+  }
+}
 
 export function useThreadMessages(threadId: string | null): ThreadMessagesState {
   return useMessagesStore((state) => (threadId ? (state.byThread[threadId] ?? EMPTY_THREAD_STATE) : EMPTY_THREAD_STATE));
@@ -270,7 +430,7 @@ async function runStream(set: Setter, get: Getter, params: RunStreamParams): Pro
     // "loading" back to "ready" once that happens, and the dock reads
     // `status` directly to decide whether to render "Loading conversation…"
     // or the message list.
-    return { ...state, status: "ready", messages, streaming: true, streamError: null };
+    return { ...state, status: "ready", messages, streaming: true, streamError: null, toolCall: null };
   });
 
   const controller = new AbortController();
@@ -364,6 +524,66 @@ async function runStream(set: Setter, get: Getter, params: RunStreamParams): Pro
           streamError: { kind: event.kind, message: event.message },
           messages: state.messages.filter((message) => message.id !== placeholderId),
         }));
+      } else if (event.type === "tool_start") {
+        // The turn is a tool call, not a text reply -- the assistant
+        // placeholder bubble never gets content (no "done" event is coming
+        // for it), so it's dropped here rather than left as a permanently
+        // empty, permanently "streaming" bubble. The user's own optimistic
+        // id is still reconciled, same as "done" does, since it's already
+        // known at this point.
+        const firingId = firingStart({ label: `Running ${humanizeToolName(event.toolName)}`, initiator: "Copilot" });
+        updateThreadIfCurrent(set, get, threadId, myGeneration, (state) => ({
+          ...state,
+          streaming: false,
+          toolCall: { toolCallId: null, toolName: event.toolName, status: "running", preview: null, userMessageId: event.userMessageId, firingId },
+          messages: state.messages
+            .filter((message) => message.id !== placeholderId)
+            .map((message) => (pendingUserId && message.id === pendingUserId ? { ...message, id: event.userMessageId } : message)),
+        }));
+      } else if (event.type === "tool_result") {
+        updateThreadIfCurrent(set, get, threadId, myGeneration, (state) => {
+          if (state.toolCall?.firingId) firingFinish(state.toolCall.firingId, event.result.status === "failed" ? "error" : "success");
+          return {
+            ...state,
+            toolCall: {
+              toolCallId: event.result.toolCallId,
+              toolName: event.result.toolName,
+              status: event.result.status,
+              preview: event.result.preview,
+              commitResult: event.result.commitResult,
+              error: event.result.error,
+              userMessageId: event.userMessageId,
+              firingId: null,
+            },
+          };
+        });
+      } else if (event.type === "tool_denied") {
+        // Deliberately routed through `toolCall`, not `streamError`:
+        // `streamError`'s banner (composer/index.tsx) only ever shows
+        // static, kind-keyed copy, never the real message -- which would
+        // silently swallow the one piece of information that matters here
+        // (gate item 4's "names the missing permission"). No
+        // `tool_calls` row exists for a denied proposal (proposeToolCall
+        // never creates one), so `toolCallId` stays null -- the approval
+        // card reads that as "nothing to retry" and hides the Retry
+        // button, since the caller's role isn't going to change by
+        // clicking it again.
+        updateThreadIfCurrent(set, get, threadId, myGeneration, (state) => {
+          if (state.toolCall?.firingId) firingFinish(state.toolCall.firingId, "error");
+          return {
+            ...state,
+            streaming: false,
+            toolCall: {
+              toolCallId: null,
+              toolName: event.toolName,
+              status: "failed",
+              preview: null,
+              error: event.message,
+              userMessageId: state.toolCall?.userMessageId ?? "",
+              firingId: null,
+            },
+          };
+        });
       }
     }
   } catch (error) {

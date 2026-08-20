@@ -8,10 +8,23 @@ export interface StreamCitation {
   href: string;
 }
 
+export interface StreamToolResult {
+  toolCallId: string;
+  toolName: string;
+  mutates: boolean;
+  status: "pending" | "rejected" | "succeeded" | "failed";
+  preview: { kind: "graph" | "diff" | "table" | "text"; summary: string; data: unknown };
+  commitResult?: { summary: string; href?: string; undo: { kind: string; payload: unknown } };
+  error?: string;
+}
+
 export type CopilotStreamEvent =
   | { type: "token"; delta: string }
   | { type: "done"; messageId: string; content: string; citations: StreamCitation[]; userMessageId: string }
-  | { type: "error"; kind: "rate_limit" | "provider_down" | "context_too_large" | "unknown"; message: string };
+  | { type: "error"; kind: "rate_limit" | "provider_down" | "context_too_large" | "unknown"; message: string }
+  | { type: "tool_start"; toolName: string; userMessageId: string }
+  | { type: "tool_result"; result: StreamToolResult; userMessageId: string }
+  | { type: "tool_denied"; toolName: string; message: string };
 
 export interface SendCopilotMessageParams {
   workspaceSlug: string;
@@ -102,6 +115,16 @@ function toStreamEvent(event: ParsedSSEEvent): CopilotStreamEvent | null {
       if (kind === "rate_limit" || kind === "provider_down" || kind === "context_too_large" || kind === "unknown") {
         return { type: "error", kind, message: data.message };
       }
+    }
+    if (event.event === "tool_start" && typeof data.toolName === "string" && typeof data.userMessageId === "string") {
+      return { type: "tool_start", toolName: data.toolName, userMessageId: data.userMessageId };
+    }
+    if (event.event === "tool_result" && typeof data.toolCallId === "string" && typeof data.userMessageId === "string") {
+      const { userMessageId, ...result } = data as unknown as StreamToolResult & { userMessageId: string };
+      return { type: "tool_result", result, userMessageId };
+    }
+    if (event.event === "tool_denied" && typeof data.toolName === "string" && typeof data.message === "string") {
+      return { type: "tool_denied", toolName: data.toolName, message: data.message };
     }
   } catch {
     // Malformed frame -- dropped rather than crashing the stream over one bad event.

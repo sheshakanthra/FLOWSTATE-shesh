@@ -33,13 +33,17 @@ export interface NodeDiffEntry {
   changes: PropertyChange[];
 }
 
-interface DiffableNode {
+// Exported for features/copilot/tools/definitions/modify-agent.ts, which
+// needs the same at-rest node/edge shape to build its own before/after
+// graphs for DiffPreview -- not a new type, just this file's existing one
+// made reusable rather than duplicated.
+export interface DiffableNode {
   id: string;
   type: string;
   position: { x: number; y: number };
   data: { label: string; config: Record<string, unknown> };
 }
-interface DiffableEdge {
+export interface DiffableEdge {
   id: string;
   source: string;
   target: string;

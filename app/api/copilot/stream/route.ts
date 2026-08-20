@@ -21,6 +21,9 @@ import { CANCELLATION_POLL_INTERVAL_MS, clearRequestCancellation, wasRequestCanc
 import { resolveCitations } from "@/features/copilot/lib/citations";
 import { buildCopilotPrompt } from "@/features/copilot/lib/prompt";
 import { retrieveContext } from "@/features/copilot/lib/retrieve";
+import { proposeToolCall } from "@/features/copilot/actions/execute";
+import { toLLMToolSpecs } from "@/features/copilot/tools/registry";
+import type { ToolActionResult } from "@/features/copilot/actions/execute";
 
 const requestSchema = z
   .object({
@@ -67,7 +70,23 @@ type StreamEvent =
   | {
       event: "error";
       data: { kind: "rate_limit" | "provider_down" | "context_too_large" | "unknown"; message: string };
-    };
+    }
+  // C3: the model chose to call a tool instead of replying with text. Sent
+  // the instant the tool call is recognized (before `run()` executes), so
+  // the client can register it with the FiringBar right away (gate item 6)
+  // rather than waiting for the tool to finish before showing anything is
+  // happening at all.
+  | { event: "tool_start"; data: { toolName: string; userMessageId: string } }
+  // The tool ran (or, for a mutating tool, was proposed) and resolved to a
+  // real, persisted tool_calls row -- `status` tells the client whether
+  // this needs approval ("pending"), is a finished read-only answer
+  // ("succeeded"), or failed outright ("failed", gate item 7).
+  | { event: "tool_result"; data: ToolActionResult & { userMessageId: string } }
+  // The tool call never became a row at all -- permission denied, an
+  // unknown tool name, or arguments that failed validation. Nothing to
+  // retry (the caller's role isn't going to change mid-conversation), so
+  // this is its own event rather than a fabricated "failed" tool_result.
+  | { event: "tool_denied"; data: { toolName: string; message: string } };
 
 export async function POST(request: Request) {
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
@@ -150,11 +169,23 @@ export async function POST(request: Request) {
       let lastCancellationCheck = 0;
 
       let accumulated = "";
+      // C3: at most one tool call per turn (spec: "no autonomous multi-step
+      // chains") -- the first one recognized wins; anything Groq proposes
+      // after it is drained from the stream but otherwise ignored.
+      let pendingToolCall: { id: string; name: string; arguments: string } | null = null;
       try {
-        for await (const chunk of getProvider().stream({ model: DEFAULT_GROQ_MODEL, messages: prompt, signal: cancelController.signal })) {
+        for await (const chunk of getProvider().stream({
+          model: DEFAULT_GROQ_MODEL,
+          messages: prompt,
+          signal: cancelController.signal,
+          tools: toLLMToolSpecs(),
+        })) {
           if (chunk.type === "token") {
             accumulated += chunk.delta;
             send({ event: "token", data: { delta: chunk.delta } });
+          } else if (chunk.type === "tool_call" && !pendingToolCall) {
+            pendingToolCall = chunk.toolCall;
+            send({ event: "tool_start", data: { toolName: chunk.toolCall.name, userMessageId: lastUserMessage.id } });
           }
 
           const now = Date.now();
@@ -166,12 +197,36 @@ export async function POST(request: Request) {
           }
         }
 
-        const { content, citations } = resolveCitations(accumulated, retrieved);
-        const saved = await appendMessage(workspaceId, threadId, { role: "assistant", content, citations });
-        send({
-          event: "done",
-          data: { messageId: saved.id, content: saved.content, citations: saved.citations ?? [], userMessageId: lastUserMessage.id },
-        });
+        if (pendingToolCall) {
+          let parsedArgs: unknown = {};
+          try {
+            parsedArgs = pendingToolCall.arguments ? JSON.parse(pendingToolCall.arguments) : {};
+          } catch {
+            // Malformed JSON from the model -- proposeToolCall's own Zod
+            // validation will reject `{}` against a tool that requires real
+            // fields, which is the honest outcome here (not a crash).
+          }
+
+          const outcome = await proposeToolCall({
+            toolName: pendingToolCall.name,
+            input: parsedArgs,
+            messageId: lastUserMessage.id,
+            ctx: { workspaceId, workspaceSlug, userId, role: context.role },
+          });
+
+          if (!outcome.ok) {
+            send({ event: "tool_denied", data: { toolName: pendingToolCall.name, message: outcome.error } });
+          } else {
+            send({ event: "tool_result", data: { ...outcome.result, userMessageId: lastUserMessage.id } });
+          }
+        } else {
+          const { content, citations } = resolveCitations(accumulated, retrieved);
+          const saved = await appendMessage(workspaceId, threadId, { role: "assistant", content, citations });
+          send({
+            event: "done",
+            data: { messageId: saved.id, content: saved.content, citations: saved.citations ?? [], userMessageId: lastUserMessage.id },
+          });
+        }
       } catch (error) {
         const isAbort = Boolean(error && typeof error === "object" && "name" in error && error.name === "AbortError");
         if (isAbort) {

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { requireRole } from "@/lib/auth/guard";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { deleteThread, getThread, listMessages, renameThread } from "@/lib/repos/copilot";
+import { listToolCallsForMessages } from "@/lib/repos/tool-calls";
 
 const renameSchema = z.object({
   workspaceSlug: z.string().min(1),
@@ -35,7 +36,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!thread) return Response.json({ error: "Conversation not found." }, { status: 404 });
 
   const messages = await listMessages(context.workspace.id, id);
-  return Response.json({ thread, messages });
+  // C3 (gate item 5, "a pending approval survives reload"): each message's
+  // own tool call, if it has one -- attached by messageId, not fetched
+  // separately by the client, so `load()` can reconstruct
+  // ThreadMessagesState.toolCall in the same pass it reconstructs messages.
+  const toolCalls = await listToolCallsForMessages(context.workspace.id, messages.map((message) => message.id));
+  const toolCallsByMessage = new Map(toolCalls.map((toolCall) => [toolCall.messageId, toolCall]));
+  const messagesWithToolCalls = messages.map((message) => ({ ...message, toolCall: toolCallsByMessage.get(message.id) ?? null }));
+
+  return Response.json({ thread, messages: messagesWithToolCalls });
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {

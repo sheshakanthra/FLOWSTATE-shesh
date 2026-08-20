@@ -35,10 +35,11 @@ export const llmExecutor: NodeExecutor<LlmConfig> = async ({ config, resolvedInp
     if (chunk.type === "token") {
       content += chunk.delta;
       ctx.onToken(chunk.delta);
-    } else {
+    } else if (chunk.type === "done") {
       content = chunk.content;
       usage = chunk.usage;
     }
+    // "tool_call" never arrives here -- this request carries no `tools`.
   }
 
   return {

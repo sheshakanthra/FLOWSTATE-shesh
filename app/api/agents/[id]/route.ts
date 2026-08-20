@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { requireRole } from "@/lib/auth/guard";
+import { agentStatusEnum } from "@/db/schema";
 import { getAgentDetail, updateAgent } from "@/lib/repos/agents";
 
 const graphSchema = z.object({
@@ -27,9 +28,20 @@ const patchSchema = z
     description: z.string().max(2000).optional(),
     graph: graphSchema.optional(),
     viewport: viewportSchema.optional(),
+    // C3: undoing/redoing a copilot-created agent (features/copilot/actions/
+    // undo-dispatch.ts) flips this between "draft" and "archived" -- the
+    // same status B6's schema comment already documents as a real, honestly
+    // modeled lifecycle value, not a UI-only toggle. No other caller in this
+    // codebase sets it through this route yet.
+    status: z.enum(agentStatusEnum.enumValues).optional(),
   })
   .refine(
-    (body) => body.name !== undefined || body.description !== undefined || body.graph !== undefined || body.viewport !== undefined,
+    (body) =>
+      body.name !== undefined ||
+      body.description !== undefined ||
+      body.graph !== undefined ||
+      body.viewport !== undefined ||
+      body.status !== undefined,
     { message: "Nothing to update." },
   );
 
@@ -80,6 +92,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     description: parsed.data.description,
     graph: parsed.data.graph,
     viewport: parsed.data.viewport,
+    status: parsed.data.status,
   });
   if (!updated) {
     return Response.json({ error: "Agent not found." }, { status: 404 });
