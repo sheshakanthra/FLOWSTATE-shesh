@@ -178,8 +178,30 @@ export const agentRuns = pgTable(
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
     errorMessage: text("error_message"),
+    // D2: which node a still-running run is on right now -- updated by
+    // app/api/agents/[id]/run/route.ts's own onStepStart callback (a cheap
+    // one-column UPDATE, not the same write as a finished run_steps row,
+    // which only exists once a step *finishes*). The in-flight zone's
+    // "current node" (scope item 1) has nowhere else to read this from:
+    // run_steps records history, not what's executing at this instant.
+    currentNodeName: text("current_node_name"),
+    currentStepIndex: integer("current_step_index"),
+    // D2 gate item 4: cross-tab cancel. The in-flight card lives on a
+    // different request/connection than the run's own NDJSON stream, so
+    // `request.signal` (same-tab Stop, already working since B4) can't
+    // reach it -- same problem C2 hit for the copilot's Stop button, same
+    // fix: a column both routes reach through the same real Postgres
+    // connection, polled (throttled) by the running request, rather than
+    // Node module state shared via import (verified, in C2, not to work
+    // reliably across Next.js Route Handler files).
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
+  // D2's own perf need, same reasoning as the index below it: `listInFlightRuns`
+  // (lib/repos/metrics.ts) scans by workspace + status ("running", or
+  // recently finished) across every agent, not one already-known agent_id
+  // the way the b6 index below serves -- a distinct access pattern this
+  // table has no index for yet.
   // B6 gate item 8 ("stays responsive with 500 agents"): the agents index
   // page's per-agent last-run/success-rate/7-day-cost aggregates are each a
   // `WHERE agent_id = ... ORDER BY started_at DESC` correlated subquery
@@ -189,7 +211,10 @@ export const agentRuns = pgTable(
   // agent row, exactly the kind of cost that stops being "responsive" once
   // there are hundreds of agents' worth of run history to scan through per
   // row rather than an index range lookup.
-  (table) => [index("agent_runs_agent_id_started_at_idx").on(table.agentId, table.startedAt)],
+  (table) => [
+    index("agent_runs_agent_id_started_at_idx").on(table.agentId, table.startedAt),
+    index("agent_runs_workspace_id_status_idx").on(table.workspaceId, table.status),
+  ],
 );
 
 export const runSteps = pgTable("run_steps", {
@@ -345,19 +370,27 @@ export const priorityItems = pgTable(
   (table) => [index("priority_items_workspace_id_resolved_idx").on(table.workspaceId, table.resolved)],
 );
 
-export const activityEvents = pgTable("activity_events", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  workspaceId: uuid("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-  actorId: uuid("actor_id").references(() => users.id, { onDelete: "set null" }),
-  verb: text("verb").notNull(),
-  subjectType: text("subject_type").notNull(),
-  subjectId: uuid("subject_id"),
-  summary: text("summary").notNull(),
-  metadata: jsonb("metadata"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const activityEvents = pgTable(
+  "activity_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    actorId: uuid("actor_id").references(() => users.id, { onDelete: "set null" }),
+    verb: text("verb").notNull(),
+    subjectType: text("subject_type").notNull(),
+    subjectId: uuid("subject_id"),
+    summary: text("summary").notNull(),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  // D2: the activity rail's `ORDER BY created_at DESC LIMIT N` (lib/repos/metrics.ts's
+  // `listRecentActivity`) scans this table for the first time since A6
+  // seeded it -- same "no automatic index on a bare FK column" reasoning as
+  // every other workspace-scoped table's own perf index.
+  (table) => [index("activity_events_workspace_id_created_at_idx").on(table.workspaceId, table.createdAt)],
+);
 
 // C3 (spec item 8): saved prompts, workspace-shared -- not per-user like
 // copilot_threads. Every member of the workspace sees and can insert into

@@ -22,7 +22,23 @@ export interface PriorityQueueProps {
   initialItems: PriorityItemClient[];
 }
 
+/** D2's live wiring into an otherwise self-contained, D1-built component --
+ *  exposed imperatively (see the `forwardRef` below) rather than as a
+ *  controlled `items`/`onChange` prop pair, so D1's local optimistic-update
+ *  state ownership (`useQueueActions`) doesn't have to change shape for a
+ *  feature this component itself has no other reason to know about. */
+export type PriorityLiveEvent = { type: "upsert"; item: PriorityItemClient } | { type: "remove"; itemId: string };
+export interface PriorityQueueHandle {
+  applyLiveEvent: (event: PriorityLiveEvent) => void;
+}
+
 const ESTIMATED_ROW_HEIGHT = 132;
+/** D2 scope item 5's wash duration for a priority item that just arrived
+ *  via `/api/live` (not one the user's own action just added -- that path
+ *  already has instant, un-washed feedback). Slightly longer than the
+ *  literal 400ms so the fade has fully settled before the flag clears --
+ *  see row.tsx's own use of this value. */
+const NEW_ITEM_HIGHLIGHT_MS = 500;
 
 /**
  * Session spec items 1/6/7: the ranked, keyboard-operable queue itself.
@@ -32,11 +48,61 @@ const ESTIMATED_ROW_HEIGHT = 132;
  * real DOM focus onto virtualized rows that mount/unmount as you scroll is
  * fragile, so focus stays on the container and `aria-activedescendant`
  * tells assistive tech which option is current.
+ *
+ * D2 note on scope item 5's "a new priority item slides in": this list is
+ * `@tanstack/react-virtual`-virtualized and re-sorts by score on every
+ * change, so a newly-materialized item can land anywhere in the order --
+ * there is no stable "top" position a slide-in animation could originate
+ * from the way there is for the (unvirtualized, insertion-ordered)
+ * in-flight zone. A5's own `DataTable` (also virtualized) established the
+ * house precedent that virtualized lists in this codebase don't get
+ * item-level enter/exit motion for the same structural reason. What *is*
+ * built here, faithfully: the `--blue-bg` wash itself (row.tsx), which
+ * doesn't depend on a position to animate from.
  */
-export function PriorityQueue({ workspaceSlug, members, initialItems }: PriorityQueueProps) {
+export const PriorityQueue = React.forwardRef<PriorityQueueHandle, PriorityQueueProps>(function PriorityQueue(
+  { workspaceSlug, members, initialItems },
+  ref,
+) {
   const router = useRouter();
   const [items, setItems] = React.useState(initialItems);
   const actions = useQueueActions(workspaceSlug, items, setItems);
+
+  const [newItemIds, setNewItemIds] = React.useState<ReadonlySet<string>>(new Set());
+  const itemsRef = React.useRef(items);
+  itemsRef.current = items;
+
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      applyLiveEvent: (event) => {
+        if (event.type === "remove") {
+          setItems((current) => current.filter((item) => item.id !== event.itemId));
+          return;
+        }
+        const isGenuinelyNew = !itemsRef.current.some((item) => item.id === event.item.id);
+        setItems((current) => {
+          const index = current.findIndex((item) => item.id === event.item.id);
+          if (index === -1) return [...current, event.item];
+          const next = current.slice();
+          next[index] = event.item;
+          return next;
+        });
+        if (isGenuinelyNew) {
+          setNewItemIds((current) => new Set(current).add(event.item.id));
+          setTimeout(() => {
+            setNewItemIds((current) => {
+              if (!current.has(event.item.id)) return current;
+              const next = new Set(current);
+              next.delete(event.item.id);
+              return next;
+            });
+          }, NEW_ITEM_HIGHLIGHT_MS);
+        }
+      },
+    }),
+    [],
+  );
 
   // Ticks once a minute so a snoozed item's dimmed state (and the "Snoozed
   // — returns …" copy) clears itself once `snoozedUntil` actually passes
@@ -174,6 +240,7 @@ export function PriorityQueue({ workspaceSlug, members, initialItems }: Priority
                 actions={actions}
                 active={virtualRow.index === activeIndex}
                 now={now}
+                isNew={newItemIds.has(item.id)}
               />
             </div>
           );
@@ -181,4 +248,4 @@ export function PriorityQueue({ workspaceSlug, members, initialItems }: Priority
       </div>
     </div>
   );
-}
+});

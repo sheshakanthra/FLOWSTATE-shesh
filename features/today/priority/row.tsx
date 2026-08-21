@@ -1,9 +1,11 @@
 "use client";
 
+import { motion } from "motion/react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge, type BadgeVariant } from "@/components/ui/badge";
 import type { WorkspaceMemberSummary } from "@/lib/repos/workspaces";
 import { formatTimestamp } from "@/features/agents/lib/format";
+import { useMotion } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { ITEM_TYPE_META } from "../lib/item-types";
 import type { PrioritySeverity } from "../lib/rank";
@@ -26,6 +28,12 @@ export interface PriorityRowProps {
   actions: QueueActions;
   active: boolean;
   now: Date;
+  /** D2 scope item 5: this row arrived via a live `/api/live` event, not
+   *  the current user's own action -- gets a brief `--blue-bg` wash. See
+   *  queue.tsx's own doc comment for why this is a wash only, not a
+   *  slide-in (the list is virtualized and re-sorts by score, so there's
+   *  no stable "top" to slide in from). */
+  isNew?: boolean;
 }
 
 /**
@@ -36,12 +44,13 @@ export interface PriorityRowProps {
  * validation error the way a full red outline would elsewhere in this
  * design system.
  */
-export function PriorityRow({ listId, item, workspaceSlug, members, actions, active, now }: PriorityRowProps) {
+export function PriorityRow({ listId, item, workspaceSlug, members, actions, active, now, isNew = false }: PriorityRowProps) {
   const meta = ITEM_TYPE_META[item.itemType];
   const Icon = meta.icon;
   const snoozedUntil = item.snoozedUntil ? new Date(item.snoozedUntil) : null;
   const isSnoozed = snoozedUntil !== null && snoozedUntil.getTime() > now.getTime();
   const isUrgent = item.severity === "critical" && !isSnoozed;
+  const { prefersReducedMotion } = useMotion();
 
   return (
     <div
@@ -49,13 +58,22 @@ export function PriorityRow({ listId, item, workspaceSlug, members, actions, act
       role="option"
       aria-selected={active}
       className={cn(
-        "flex flex-col gap-2 border-b border-l-2 border-ink-400 border-l-transparent bg-ink-100 px-4 py-3",
+        "relative flex flex-col gap-2 border-b border-l-2 border-ink-400 border-l-transparent bg-ink-100 px-4 py-3",
         "transition-instant transition-colors",
         active && "bg-ink-200",
         isUrgent && "border-l-red-line",
         isSnoozed && "opacity-60",
       )}
     >
+      {isNew && !prefersReducedMotion ? (
+        <motion.div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 bg-blue-bg"
+          initial={{ opacity: 1 }}
+          animate={{ opacity: 0 }}
+          transition={{ duration: 0.4 }}
+        />
+      ) : null}
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-start gap-2.5">
           <div

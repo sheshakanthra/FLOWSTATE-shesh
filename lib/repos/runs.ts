@@ -68,6 +68,36 @@ export async function finishRun(workspaceId: string, runId: string, patch: Finis
   );
 }
 
+/** D2 scope item 1's "current node" -- called from the run route's own
+ *  `onStepStart` callback, once per node, while the run is still going.
+ *  A cheap single-column update, deliberately not folded into `recordStep`
+ *  (lib/repos/runs.ts's own `run_steps` insert only ever happens on a
+ *  step's *end*, see that function's doc comment) -- this is the only
+ *  place "what's executing right now" is ever recorded. */
+export async function updateRunProgress(workspaceId: string, runId: string, nodeName: string, stepIndex: number): Promise<void> {
+  await withScope({ workspaceId }, (tx) =>
+    tx.update(agentRuns).set({ currentNodeName: nodeName, currentStepIndex: stepIndex }).where(eq(agentRuns.id, runId)),
+  );
+}
+
+/** D2 gate item 4's cross-tab cancel: the in-flight card's Cancel button
+ *  (a different request than the run's own NDJSON stream) writes this;
+ *  the running request's own poll loop (app/api/agents/[id]/run/route.ts)
+ *  reads it and self-aborts. Same column-not-module-state reasoning as
+ *  features/copilot/lib/cancellation.ts -- see that file's doc comment for
+ *  why a plain in-memory registry didn't work for the same class of
+ *  problem in C2. */
+export async function requestRunCancellation(workspaceId: string, runId: string): Promise<void> {
+  await withScope({ workspaceId }, (tx) => tx.update(agentRuns).set({ cancelRequested: true }).where(eq(agentRuns.id, runId)));
+}
+
+export async function isRunCancellationRequested(workspaceId: string, runId: string): Promise<boolean> {
+  const [row] = await withScope({ workspaceId }, (tx) =>
+    tx.select({ cancelRequested: agentRuns.cancelRequested }).from(agentRuns).where(eq(agentRuns.id, runId)).limit(1),
+  );
+  return row?.cancelRequested ?? false;
+}
+
 /**
  * The record shape B5's replay depends on (session spec's own Notes: "if it
  * lacks resolved inputs or precise timestamps, replay will be approximate").

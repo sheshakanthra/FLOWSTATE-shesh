@@ -3,10 +3,11 @@ import { getSession } from "@/lib/auth/session";
 import { getWorkspaceContext, listMembers } from "@/lib/repos/workspaces";
 import { getUserById } from "@/lib/repos/users";
 import { listPriorityItems } from "@/lib/repos/priorities";
+import { getMetricsRollup, listInFlightRuns, listRecentActivity } from "@/lib/repos/metrics";
 import { PageHeader } from "@/components/patterns/page-header";
 import { TemplateGallery } from "@/features/agents/templates/gallery";
-import { PriorityQueue } from "@/features/today/priority/queue";
-import type { PriorityItemClient } from "@/features/today/priority/store";
+import { TodayShell } from "@/features/today/today-shell";
+import { toLiveActivityEvent, toLivePriorityItem, toLiveRun } from "@/features/today/live/serialize";
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -28,15 +29,14 @@ function greetingForHour(hour: number): string {
 }
 
 /**
- * Session spec item 8: PageHeader, a greeting with the user's name and
- * date, and a quick-create action -- `TemplateGallery` (B6) already is
- * exactly that action ("New agent" → pick a template → creates a real
- * draft agent), reused here rather than a second create-agent surface.
- *
- * Priority items are fetched once, here, via `listPriorityItems`'s single
- * indexed query -- the real data behind gate item 3's "full paint under
- * 800ms with 500 priority items": the queue's first render is this page's
- * own server-rendered HTML, not a client-side fetch-then-render.
+ * D1's session spec item 8 (PageHeader, greeting, quick-create) plus D2's
+ * own four data sources -- priority items, in-flight runs, metrics, and
+ * activity are all fetched once, here, server-side, and handed to
+ * `TodayShell` as `initialData`/`initialItems`/etc. seeds. This is what
+ * gate item 3's "full paint under 800ms" (D1) and the general "no visible
+ * refetch flash" (D2 gate item 2) both rest on: the first paint is this
+ * page's own server-rendered HTML, and every client-side query
+ * (`TodayShell`'s children) starts already-populated rather than loading.
  */
 export default async function TodayPage({ params }: { params: Promise<{ workspace: string }> }) {
   const { workspace: workspaceSlug } = await params;
@@ -46,33 +46,20 @@ export default async function TodayPage({ params }: { params: Promise<{ workspac
 
   const context = await getWorkspaceContext(session.userId, workspaceSlug);
   if (!context) redirect("/login?no-workspace=1");
+  const workspaceId = context.workspace.id;
 
-  const [user, items, members] = await Promise.all([
+  const [user, priorityItems, members, runs, metrics, activity] = await Promise.all([
     getUserById(session.userId),
-    listPriorityItems(context.workspace.id),
-    listMembers(context.workspace.id),
+    listPriorityItems(workspaceId),
+    listMembers(workspaceId),
+    listInFlightRuns(workspaceId),
+    getMetricsRollup(workspaceId),
+    listRecentActivity(workspaceId),
   ]);
   if (!user) redirect("/login");
 
   const now = new Date();
   const firstName = user.name.split(" ")[0] ?? user.name;
-
-  const initialItems: PriorityItemClient[] = items.map((item) => ({
-    id: item.id,
-    title: item.title,
-    description: item.description,
-    severity: item.severity,
-    itemType: item.itemType,
-    sourceType: item.sourceType,
-    sourceId: item.sourceId,
-    assigneeId: item.assigneeId,
-    assigneeName: item.assigneeName,
-    resolved: item.resolved,
-    magnitude: item.magnitude,
-    entitySignal: item.entitySignal,
-    snoozedUntil: item.snoozedUntil ? item.snoozedUntil.toISOString() : null,
-    createdAt: item.createdAt.toISOString(),
-  }));
 
   return (
     <div className="flex h-full w-full flex-col gap-6 p-6">
@@ -81,7 +68,14 @@ export default async function TodayPage({ params }: { params: Promise<{ workspac
         description={formatLongDate(now)}
         actions={<TemplateGallery workspaceSlug={workspaceSlug} />}
       />
-      <PriorityQueue workspaceSlug={workspaceSlug} members={members} initialItems={initialItems} />
+      <TodayShell
+        workspaceSlug={workspaceSlug}
+        members={members}
+        initialPriorityItems={priorityItems.map(toLivePriorityItem)}
+        initialRuns={runs.map(toLiveRun)}
+        initialMetrics={metrics}
+        initialActivity={activity.map(toLiveActivityEvent)}
+      />
     </div>
   );
 }

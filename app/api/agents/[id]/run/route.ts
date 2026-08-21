@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { requireRole } from "@/lib/auth/guard";
 import { getAgentDetail } from "@/lib/repos/agents";
-import { createRun, finishRun, recordStep, type StepEntry } from "@/lib/repos/runs";
+import {
+  createRun,
+  finishRun,
+  isRunCancellationRequested,
+  recordStep,
+  updateRunProgress,
+  type StepEntry,
+} from "@/lib/repos/runs";
 import { syncAgentPriorityItems } from "@/lib/repos/priorities";
 import { getVersion } from "@/lib/repos/agent-versions";
 import { runGraph, type EngineNode } from "@/features/agents/engine/executor";
@@ -58,12 +65,20 @@ type RunEvent =
  * NDJSON so the test console can render a live log (gate item 4) and the
  * canvas can show live per-node feedback (gate item 5) without polling.
  *
- * Cancellation (gate item 6) rides on the platform primitive already built
- * for this: a Route Handler's `request.signal` fires when the client's
- * `fetch()` is aborted (the console's Cancel button calls
- * `AbortController.abort()`), and that same `AbortSignal` is threaded all
- * the way down to `groq.ts`'s `fetch()` call, so an in-flight Groq request
- * is what actually stops -- no separate cancellation channel was built.
+ * Cancellation (B4 gate item 6, same-tab): `request.signal` fires when the
+ * client's own `fetch()` is aborted (the console's Cancel button), and
+ * that's threaded into `cancelController` below alongside D2's own channel.
+ *
+ * D2 gate item 4 adds cross-tab cancellation: the in-flight zone's Cancel
+ * button lives on an entirely different request (Today's page, not this
+ * one), so it can't touch `request.signal` at all -- the same shape of
+ * problem C2 hit for the copilot's Stop button, and the same fix: a
+ * `cancel_requested` column on `agent_runs` (see its own schema doc
+ * comment) that `POST /api/agents/[id]/run/[runId]/cancel` sets and this
+ * route polls, both through the same real Postgres connection rather than
+ * Node module state. Both cancellation sources feed one local
+ * `cancelController`, so `runGraph` only ever has to know about a single
+ * `AbortSignal`.
  */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id: agentId } = await params;
@@ -115,6 +130,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         }
       }
 
+      // D2 gate item 4: a single local AbortController both cancellation
+      // sources feed -- request.signal (same-tab) via a listener, and the
+      // in-flight zone's cross-tab request via this poll loop, throttled
+      // the same way C2's copilot-stream cancellation is (frequent enough
+      // to clear the 500ms budget with room to spare, far less often than
+      // a Postgres round trip is free).
+      const cancelController = new AbortController();
+      request.signal.addEventListener("abort", () => cancelController.abort());
+      const cancelPollInterval = setInterval(() => {
+        void isRunCancellationRequested(workspaceId, run.id).then((requested) => {
+          if (requested) cancelController.abort();
+        });
+      }, 150);
+
       send({ type: "run-start", runId: run.id });
 
       try {
@@ -122,9 +151,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           nodes: graph.nodes,
           edges: graph.edges,
           runInput: parsed.data.runInput,
-          signal: request.signal,
+          signal: cancelController.signal,
           onStepStart: (event) => {
             send({ type: "step-start", nodeId: event.nodeId, stepIndex: event.stepIndex, name: event.name, kind: event.kind });
+            // D2 scope item 1: what the in-flight card's "current node"
+            // reads. Best-effort -- a write failing here shouldn't stall
+            // or fail a run that's otherwise progressing normally.
+            void updateRunProgress(workspaceId, run.id, event.name, event.stepIndex).catch(() => {});
           },
           onToken: (nodeId, delta) => {
             send({ type: "token", nodeId, delta });
@@ -206,6 +239,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         await syncAgentPriorityItems(workspaceId, agentId).catch(() => {});
         send({ type: "run-error", message });
       } finally {
+        clearInterval(cancelPollInterval);
         try {
           controller.close();
         } catch {

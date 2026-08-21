@@ -4,6 +4,7 @@ import { PermissionsProvider } from "@/lib/auth/permission-gate";
 import { getWorkspaceContext, listWorkspacesForUser } from "@/lib/repos/workspaces";
 import { getUserById } from "@/lib/repos/users";
 import { Shell } from "@/components/shell/shell";
+import { QueryProvider } from "@/components/providers/query-provider";
 
 export default async function WorkspaceLayout({
   children,
@@ -28,13 +29,15 @@ export default async function WorkspaceLayout({
 
   return (
     <PermissionsProvider role={context.role}>
-      <Shell
-        currentWorkspace={context.workspace}
-        workspaces={workspaces}
-        user={{ name: user.name, email: user.email }}
-      >
-        {children}
-      </Shell>
+      <QueryProvider>
+        <Shell
+          currentWorkspace={context.workspace}
+          workspaces={workspaces}
+          user={{ name: user.name, email: user.email }}
+        >
+          {children}
+        </Shell>
+      </QueryProvider>
     </PermissionsProvider>
   );
 }
