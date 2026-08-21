@@ -19,6 +19,14 @@ const commitMono = localFont({
   src: [{ path: "../public/fonts/commitmono-400.woff2", weight: "400", style: "normal" }],
   variable: "--font-commit-mono",
   display: "swap",
+  // Not preloaded: this is a shared root layout, so next/font's default
+  // eager preload otherwise fetches this file on every route including the
+  // marketing hero (E1), which never renders `font-mono` text and has a
+  // 1.2s LCP budget under throttled mobile -- competing render-blocking-CSS
+  // and font requests for the same slow pipe measured real LCP at ~1.8s
+  // before this. `display: "swap"` already covers the fallback-then-swap
+  // behavior for whichever authenticated-app screen first renders mono text.
+  preload: false,
 });
 
 export const metadata: Metadata = {

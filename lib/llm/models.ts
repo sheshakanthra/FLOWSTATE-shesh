@@ -54,6 +54,21 @@ export const GROQ_MODEL_IDS = GROQ_MODELS.map((model) => model.id) as [string, .
 
 export const DEFAULT_GROQ_MODEL: string = GROQ_MODELS[0]!.id;
 
+/**
+ * `[E1]` The model `features/agents/generation/generate-from-description.ts`
+ * calls -- deliberately not `DEFAULT_GROQ_MODEL`. Confirmed directly against
+ * the real API: given that file's actual system prompt (the full node-type
+ * catalog description, several hundred tokens), `openai/gpt-oss-20b`
+ * returned a completely empty `content` string on every one of 5 test
+ * prompts (`finish_reason` still `"stop"` -- not a length/truncation issue,
+ * the smaller model just produces nothing under this prompt's length/
+ * complexity in JSON mode), while `openai/gpt-oss-120b` returned valid,
+ * complete JSON on all 5. `DEFAULT_GROQ_MODEL` stays `gpt-oss-20b` for every
+ * other caller (the LLM node's own default config, Copilot) since none of
+ * them send a system prompt anywhere near this long.
+ */
+export const STRUCTURED_GENERATION_MODEL: string = "openai/gpt-oss-120b";
+
 export function getModelLabel(id: string): string {
   return GROQ_MODELS.find((model) => model.id === id)?.label ?? id;
 }

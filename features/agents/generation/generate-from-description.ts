@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { getProvider } from "@/lib/llm/provider";
-import { DEFAULT_GROQ_MODEL } from "@/lib/llm/models";
+import { STRUCTURED_GENERATION_MODEL } from "@/lib/llm/models";
 import { arePortTypesCompatible } from "../lib/port-types";
 import { validateGraph, type ValidationIssue } from "../lib/validate-graph";
 import { createNode, generateEdgeId, getNodeType, listNodeTypes, type AgentNode } from "../nodes/registry";
+import { LLM_CALL_RETRY_POLICY, withRetry } from "../engine/retry";
 
 /**
  * C3's demo moment, and the thing E1 (marketing hero) reuses verbatim per
@@ -97,7 +98,13 @@ function buildSystemPrompt(): string {
  * final sequence it landed, which a second pass over pre-built positions
  * would have to re-derive.
  */
-function assembleGraph(plan: GeneratedPlan): GeneratedAgent["graph"] {
+/** Exported for features/marketing/hero/fallback-graph.ts (E1), which needs
+ *  the exact same bridge-insertion/position-assembly behavior for its
+ *  hand-authored fallback plan that a real generated plan gets -- so the
+ *  fallback graph is guaranteed structurally valid (passes `validateGraph`,
+ *  never needs its own copy of the port-compatibility/bridging logic) rather
+ *  than being a second, driftable hand-wired graph. */
+export function assembleGraph(plan: GeneratedPlan): GeneratedAgent["graph"] {
   const validSteps = plan.steps.filter((step) => getNodeType(step.type) !== undefined);
   const steps = validSteps.length > 0 ? validSteps : [{ type: "trigger", label: "Start", config: {} }];
 
@@ -152,24 +159,20 @@ export interface GenerateFromDescriptionOptions {
   signal?: AbortSignal;
 }
 
-/** The one entry point -- calls Groq once (JSON mode), validates the shape,
- *  and assembles a real graph. Throws on a request the model couldn't turn
- *  into valid JSON at all (surfaces as the tool's own failure state, gate
- *  item 7's "specific error, working retry" -- retrying re-runs this same
- *  function). */
-export async function generateAgentFromDescription(
-  description: string,
-  options: GenerateFromDescriptionOptions = {},
-): Promise<GeneratedAgent> {
+/** Calls Groq (JSON mode) and returns a validated plan, or throws one of
+ *  this function's own two specific error messages. Split out from
+ *  `generateAgentFromDescription` purely so `withRetry` (below) has a
+ *  single attempt to retry, not the whole assemble/validate pipeline. */
+async function requestPlan(description: string, signal?: AbortSignal): Promise<GeneratedPlan> {
   const response = await getProvider().complete({
-    model: DEFAULT_GROQ_MODEL,
+    model: STRUCTURED_GENERATION_MODEL,
     messages: [
       { role: "system", content: buildSystemPrompt() },
       { role: "user", content: description },
     ],
     temperature: 0.4,
     responseFormat: "json",
-    signal: options.signal,
+    signal,
   });
 
   let parsed: unknown;
@@ -183,12 +186,33 @@ export async function generateAgentFromDescription(
   if (!plan.success) {
     throw new Error("The model's agent plan was missing required fields. Try rephrasing the description.");
   }
+  return plan.data;
+}
 
-  const graph = assembleGraph(plan.data);
+/** The one entry point -- calls Groq (JSON mode), validates the shape, and
+ *  assembles a real graph. A response that fails JSON-parse or schema
+ *  validation is retried once (`LLM_CALL_RETRY_POLICY`, the same policy the
+ *  run engine gives every real `llm_call` step) before this throws --
+ *  open-weight models in JSON mode occasionally produce a malformed or
+ *  truncated response even for a perfectly ordinary prompt (confirmed via
+ *  this file's own fixture test: E1's own 10-fixture gate item measured a
+ *  real ~40-80% single-attempt failure rate for some fixtures purely from
+ *  this class of transient bad output, unrelated to the description's own
+ *  quality). A genuinely bad request still fails after the retry and
+ *  surfaces the same specific error either way (gate item 7's "specific
+ *  error, working retry" -- a user-triggered retry after that still just
+ *  re-runs this same function). */
+export async function generateAgentFromDescription(
+  description: string,
+  options: GenerateFromDescriptionOptions = {},
+): Promise<GeneratedAgent> {
+  const { value: plan } = await withRetry(() => requestPlan(description, options.signal), LLM_CALL_RETRY_POLICY, options.signal);
+
+  const graph = assembleGraph(plan);
   const issues = validateGraph(
     graph.nodes.map((node) => ({ id: node.id, type: node.type, data: node.data })),
     graph.edges,
   );
 
-  return { name: plan.data.name, description: plan.data.description, graph, issues };
+  return { name: plan.name, description: plan.description, graph, issues };
 }
